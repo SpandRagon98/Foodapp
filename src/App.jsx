@@ -1,813 +1,578 @@
-// ============================================================
-// MenuSaarthi — AI-Powered Menu Translator for Travelers
-// Single-file React app, Tailwind CSS via CDN
-// ============================================================
-// Architecture:
-// - State machine: screen = 'landing' | 'upload' | 'scanning' | 'results'
-// - Mock OCR + AI pipeline triggered on image upload
-// - Anthropic API call generates real dish explanations
-// - sampleMenu.json baked in as JS constant
-// - DishCard component handles all dietary/spice UI
-// - PhraseHelper panel for traveler phrases
-// - Mode toggle: Traveler / Restaurant
-// ============================================================
+import { useState, useRef, useCallback, useEffect } from "react";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+// ════════════════════════════════════════════════════════════════
+//  MenuSaarthi — AI-Powered Menu Translator
+//  • Camera capture OR image upload
+//  • Image sent directly to Claude API (vision)
+//  • Claude detects language, reads dish names, web-searches each dish
+//  • Returns: pronunciation, ingredients, spice level, allergens, description
+//  • No hardcoded dishes. 100% live AI.
+// ════════════════════════════════════════════════════════════════
 
-// ─── Sample Menu Data ──────────────────────────────────────
-const SAMPLE_DISHES = [
-  {
-    id: 1,
-    originalName: "ಮಸಾಲೆ ದೋಸೆ",
-    transliteration: "Masale Dose",
-    translatedName: "Spiced Crepe",
-    pronunciation: "muh-SAA-leh DOH-say",
-    description: "Thin, crispy rice & lentil crepe filled with spiced potato masala, served with coconut chutney and sambar (lentil soup). A South Indian breakfast icon.",
-    ingredients: ["Rice", "Urad dal", "Potato", "Onion", "Mustard seeds", "Curry leaves", "Turmeric", "Coconut"],
-    category: "Breakfast",
-    isVeg: true,
-    dietaryTags: ["veg", "gluten-free"],
-    allergens: [],
-    spiceLevel: 2,
-    dishType: ["crispy", "light", "savory"],
-    price: "₹120",
-    origin: "Karnataka / Tamil Nadu",
-    emoji: "🫓",
-  },
-  {
-    id: 2,
-    originalName: "लिट्टी चोखा",
-    transliteration: "Litti Chokha",
-    translatedName: "Roasted Wheat Balls with Mashed Veggies",
-    pronunciation: "LIT-tee CHOH-kha",
-    description: "Baked whole wheat dumplings stuffed with roasted gram flour, served with fire-roasted mashed eggplant and tomato. A beloved street food from Bihar.",
-    ingredients: ["Whole wheat flour", "Sattu (roasted gram)", "Brinjal/Eggplant", "Tomato", "Mustard oil", "Garlic", "Ginger"],
-    category: "Main Course",
-    isVeg: true,
-    dietaryTags: ["veg"],
-    allergens: ["gluten"],
-    spiceLevel: 3,
-    dishType: ["roasted", "hearty", "earthy"],
-    price: "₹150",
-    origin: "Bihar / Jharkhand",
-    emoji: "⚪",
-  },
-  {
-    id: 3,
-    originalName: "চিংড়ি মালাই কারি",
-    transliteration: "Chingri Malai Curry",
-    translatedName: "Prawn Coconut Cream Curry",
-    pronunciation: "CHING-ree muh-LYE KAA-ree",
-    description: "Jumbo prawns slow-cooked in a velvety coconut milk curry with mustard seeds and green chillies. A festive Bengali delicacy with gentle sweetness.",
-    ingredients: ["Tiger prawns", "Coconut milk", "Mustard oil", "Green chilli", "Onion", "Ginger", "Turmeric"],
-    category: "Main Course",
-    isVeg: false,
-    dietaryTags: ["non-veg", "seafood", "dairy-free"],
-    allergens: ["shellfish"],
-    spiceLevel: 2,
-    dishType: ["creamy", "mild", "festive"],
-    price: "₹380",
-    origin: "West Bengal",
-    emoji: "🍤",
-  },
-  {
-    id: 4,
-    originalName: "ઉંધિયુ",
-    transliteration: "Undhiyu",
-    translatedName: "Slow-cooked Winter Vegetables",
-    pronunciation: "UN-dee-yoo",
-    description: "A Gujarati winter speciality — seasonal vegetables, green garlic, and fenugreek dumplings slow-cooked underground with spices. Rich, warming, and utterly unique.",
-    ingredients: ["Surti papdi beans", "Raw banana", "Purple yam", "Fenugreek dumplings", "Coconut", "Green garlic", "Sesame seeds"],
-    category: "Main Course",
-    isVeg: true,
-    dietaryTags: ["veg", "dairy-free"],
-    allergens: ["gluten"],
-    spiceLevel: 2,
-    dishType: ["slow-cooked", "hearty", "seasonal"],
-    price: "₹220",
-    origin: "Gujarat (Surat)",
-    emoji: "🥘",
-  },
-  {
-    id: 5,
-    originalName: "അപ്പം with Stew",
-    transliteration: "Appam with Stew",
-    translatedName: "Lacy Rice Pancake with Vegetable/Chicken Stew",
-    pronunciation: "UP-um",
-    description: "Soft, lacy-edged fermented rice pancakes with a pillowy center, served with a mild coconut milk stew with vegetables or chicken. Kerala's comforting Sunday classic.",
-    ingredients: ["Rice", "Coconut milk", "Yeast", "Potato", "Carrot", "Onion", "Green chilli", "Ginger"],
-    category: "Breakfast / Dinner",
-    isVeg: false,
-    dietaryTags: ["non-veg", "gluten-free"],
-    allergens: [],
-    spiceLevel: 1,
-    dishType: ["mild", "creamy", "comforting"],
-    price: "₹180",
-    origin: "Kerala",
-    emoji: "🥞",
-  },
-  {
-    id: 6,
-    originalName: "मिसळ पाव",
-    transliteration: "Misal Pav",
-    translatedName: "Spicy Sprout Curry with Bread",
-    pronunciation: "MEE-sul PAAV",
-    description: "A fiery Maharashtrian breakfast — sprouted moth beans in a pungent red gravy, topped with crunchy farsan (savory mix), raw onion, and lemon. Served with soft white buns.",
-    ingredients: ["Moth beans (matki)", "Farsan (fried gram mix)", "Onion", "Tomato", "Kokum", "Goda masala", "Pav (bread rolls)"],
-    category: "Breakfast",
-    isVeg: true,
-    dietaryTags: ["veg", "dairy-free"],
-    allergens: ["gluten"],
-    spiceLevel: 4,
-    dishType: ["spicy", "crunchy", "tangy"],
-    price: "₹100",
-    origin: "Maharashtra (Pune / Kolhapur)",
-    emoji: "🌶️",
-  },
-];
+// ── Helpers ─────────────────────────────────────────────────────
 
-const TRAVELER_PHRASES = [
-  { id: 1, emoji: "🌶️", english: "Is this spicy?", hindi: "क्या यह तीखा है?", phonetic: "Kya yeh teekha hai?" },
-  { id: 2, emoji: "🥚", english: "Does this contain egg?", hindi: "क्या इसमें अंडा है?", phonetic: "Kya ismein anda hai?" },
-  { id: 3, emoji: "🥜", english: "Does this have nuts?", hindi: "क्या इसमें मेवे हैं?", phonetic: "Kya ismein meve hain?" },
-  { id: 4, emoji: "🐄", english: "Is this dairy-free?", hindi: "क्या यह डेयरी-मुक्त है?", phonetic: "Kya yeh dairy-mukt hai?" },
-  { id: 5, emoji: "😌", english: "Can you make it less spicy?", hindi: "क्या कम तीखा बना सकते हैं?", phonetic: "Kya kam teekha bana sakte hain?" },
-  { id: 6, emoji: "🌿", english: "I am vegetarian.", hindi: "मैं शाकाहारी हूँ।", phonetic: "Main shakahari hoon." },
-  { id: 7, emoji: "🍽️", english: "What is the best dish here?", hindi: "यहाँ सबसे अच्छा व्यंजन कौन सा है?", phonetic: "Yahan sabse accha vyanjan kaun sa hai?" },
-  { id: 8, emoji: "🦐", english: "Does this have seafood?", hindi: "क्या इसमें समुद्री भोजन है?", phonetic: "Kya ismein samudri bhojan hai?" },
-];
-
-const LANGUAGES = [
-  { code: "en", name: "English", flag: "🇬🇧" },
-  { code: "fr", name: "French", flag: "🇫🇷" },
-  { code: "de", name: "German", flag: "🇩🇪" },
-  { code: "ja", name: "Japanese", flag: "🇯🇵" },
-  { code: "zh", name: "Chinese", flag: "🇨🇳" },
-  { code: "es", name: "Spanish", flag: "🇪🇸" },
-  { code: "ar", name: "Arabic", flag: "🇸🇦" },
-  { code: "ko", name: "Korean", flag: "🇰🇷" },
-];
-
-const SUPPORTED_SCRIPTS = [
-  { lang: "Bengali", script: "বাংলা", region: "West Bengal, Bangladesh" },
-  { lang: "Hindi", script: "हिंदी", region: "North India" },
-  { lang: "Tamil", script: "தமிழ்", region: "Tamil Nadu, Sri Lanka" },
-  { lang: "Telugu", script: "తెలుగు", region: "Andhra, Telangana" },
-  { lang: "Kannada", script: "ಕನ್ನಡ", region: "Karnataka" },
-  { lang: "Malayalam", script: "മലയാളം", region: "Kerala" },
-  { lang: "Marathi", script: "मराठी", region: "Maharashtra" },
-  { lang: "Gujarati", script: "ગુજરાતી", region: "Gujarat" },
-  { lang: "Punjabi", script: "ਪੰਜਾਬੀ", region: "Punjab" },
-];
-
-// ─── Spice Level Component ─────────────────────────────────
-function SpiceLevel({ level }) {
+function SpiceBar({ level }) {
+  // level: 0-5
+  const labels = ["None", "Mild", "Medium", "Hot", "Very Hot", "Extreme"];
+  const colors = ["bg-gray-300", "bg-green-400", "bg-yellow-400", "bg-orange-400", "bg-red-500", "bg-red-700"];
   return (
-    <div className="flex items-center gap-1">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <span
-          key={i}
-          className={`text-base transition-all ${i <= level ? "opacity-100" : "opacity-20"}`}
-        >
-          🌶️
-        </span>
-      ))}
-      <span className="ml-1 text-xs text-amber-700 font-medium">
-        {level === 0 ? "No spice" : level === 1 ? "Mild" : level === 2 ? "Medium" : level === 3 ? "Hot" : level === 4 ? "Very Hot" : "Extreme"}
+    <div className="flex items-center gap-2">
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map(i => (
+          <div
+            key={i}
+            className={`h-2 w-5 rounded-full transition-all ${i <= level ? colors[level] : "bg-gray-200"}`}
+          />
+        ))}
+      </div>
+      <span className="text-xs font-semibold" style={{ color: level >= 4 ? "#dc2626" : level >= 3 ? "#ea580c" : level >= 2 ? "#ca8a04" : "#16a34a" }}>
+        {labels[level] || "Unknown"}
       </span>
     </div>
   );
 }
 
-// ─── Dietary Badge ─────────────────────────────────────────
-function DietBadge({ tag }) {
-  const styles = {
-    veg: "bg-green-100 text-green-800 border-green-200",
-    "non-veg": "bg-red-100 text-red-800 border-red-200",
-    egg: "bg-yellow-100 text-yellow-800 border-yellow-200",
-    seafood: "bg-blue-100 text-blue-800 border-blue-200",
-    "dairy-free": "bg-purple-100 text-purple-800 border-purple-200",
-    "gluten-free": "bg-orange-100 text-orange-800 border-orange-200",
-  };
-  const labels = {
-    veg: "🟢 Veg",
-    "non-veg": "🔴 Non-Veg",
-    egg: "🥚 Egg",
-    seafood: "🦐 Seafood",
-    "dairy-free": "🥛 Dairy-Free",
-    "gluten-free": "🌾 Gluten-Free",
+function Badge({ children, color = "amber" }) {
+  const map = {
+    green: "bg-green-100 text-green-800 border-green-200",
+    red: "bg-red-100 text-red-800 border-red-200",
+    amber: "bg-amber-100 text-amber-800 border-amber-200",
+    blue: "bg-blue-100 text-blue-800 border-blue-200",
+    purple: "bg-purple-100 text-purple-800 border-purple-200",
+    gray: "bg-gray-100 text-gray-600 border-gray-200",
   };
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${styles[tag] || "bg-gray-100 text-gray-700 border-gray-200"}`}>
-      {labels[tag] || tag}
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${map[color]}`}>
+      {children}
     </span>
   );
 }
 
-// ─── Dish Card Component ────────────────────────────────────
-// [API INTEGRATION POINT: Replace static data with API response from translation/OCR pipeline]
-function DishCard({ dish, lang }) {
-  const [expanded, setExpanded] = useState(false);
+function SpeakButton({ text }) {
   const [speaking, setSpeaking] = useState(false);
+  const speak = () => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.onstart = () => setSpeaking(true);
+    u.onend = () => setSpeaking(false);
+    window.speechSynthesis.speak(u);
+  };
+  return (
+    <button
+      onClick={speak}
+      className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-semibold transition-all border ${
+        speaking
+          ? "bg-teal-500 text-white border-teal-500 animate-pulse"
+          : "bg-white border-teal-200 text-teal-700 hover:bg-teal-50"
+      }`}
+    >
+      <span>{speaking ? "🔊" : "🔈"}</span>
+      <span>{speaking ? "Speaking…" : "Hear it"}</span>
+    </button>
+  );
+}
 
-  // [TTS INTEGRATION POINT: Replace with Web Speech API or Google TTS]
-  const speak = (e) => {
-    e.stopPropagation();
-    if ("speechSynthesis" in window) {
-      setSpeaking(true);
-      const utterance = new SpeechSynthesisUtterance(dish.transliteration);
-      utterance.onend = () => setSpeaking(false);
-      window.speechSynthesis.speak(utterance);
-    }
+// ── Dish Card ────────────────────────────────────────────────────
+function DishCard({ dish, index }) {
+  const [open, setOpen] = useState(false);
+
+  const dietColor = (tag) => {
+    if (tag === "Veg") return "green";
+    if (tag === "Non-Veg") return "red";
+    if (tag === "Egg") return "amber";
+    if (tag === "Vegan") return "green";
+    if (tag === "Contains Nuts") return "purple";
+    if (tag === "Contains Dairy") return "blue";
+    if (tag === "Contains Gluten") return "amber";
+    if (tag === "Seafood") return "blue";
+    return "gray";
   };
 
   return (
     <div
-      className="bg-white rounded-2xl shadow-sm border border-amber-100 overflow-hidden transition-all duration-300 hover:shadow-md cursor-pointer"
-      onClick={() => setExpanded(!expanded)}
+      className="bg-white rounded-2xl border border-amber-100 shadow-sm overflow-hidden transition-all duration-300"
+      style={{ animationDelay: `${index * 80}ms` }}
     >
-      {/* Card Header */}
-      <div className="p-4 flex items-start gap-3">
-        <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center text-3xl flex-shrink-0 border border-amber-100">
-          {dish.emoji}
+      {/* Header — always visible */}
+      <button
+        className="w-full text-left p-4 flex items-start gap-3"
+        onClick={() => setOpen(o => !o)}
+      >
+        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center text-2xl flex-shrink-0 border border-amber-200">
+          {dish.emoji || "🍽️"}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div>
-              <p className="text-lg font-semibold text-gray-800 leading-tight">{dish.originalName}</p>
-              <p className="text-xs text-amber-600 font-medium mt-0.5">{dish.transliteration}</p>
-            </div>
-            <span className="text-sm font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-100 flex-shrink-0">{dish.price}</span>
+          <p className="font-bold text-gray-800 text-base leading-tight">{dish.originalName}</p>
+          <p className="text-xs text-amber-600 font-medium mt-0.5">{dish.scriptDetected}</p>
+          <p className="text-sm text-gray-600 mt-0.5 font-medium">{dish.translatedName}</p>
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {dish.dietaryTags?.map(t => <Badge key={t} color={dietColor(t)}>{t}</Badge>)}
           </div>
-          <p className="text-base text-gray-700 font-medium mt-1">{dish.translatedName}</p>
         </div>
-      </div>
+        <span className="text-amber-400 text-lg mt-1 flex-shrink-0">{open ? "▲" : "▼"}</span>
+      </button>
 
-      {/* Spice + Tags Row */}
-      <div className="px-4 pb-3 flex flex-wrap items-center gap-2">
-        <SpiceLevel level={dish.spiceLevel} />
-      </div>
-      <div className="px-4 pb-3 flex flex-wrap gap-1.5">
-        {dish.dietaryTags.map((t) => <DietBadge key={t} tag={t} />)}
-        {dish.dishType.map((t) => (
-          <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200 capitalize">{t}</span>
-        ))}
-      </div>
+      {/* Expanded detail */}
+      {open && (
+        <div className="border-t border-amber-50 bg-amber-50/30 px-4 py-4 space-y-4">
 
-      {/* Expanded Details */}
-      {expanded && (
-        <div className="border-t border-amber-50 bg-amber-50/40 px-4 py-4 space-y-3">
-          {/* Pronunciation + TTS */}
-          <div className="flex items-center gap-3 bg-white rounded-xl p-3 border border-amber-100">
-            <div className="flex-1">
-              <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-0.5">How to say it</p>
-              <p className="text-sm font-mono text-gray-700">/{dish.pronunciation}/</p>
+          {/* Pronunciation */}
+          <div className="bg-white rounded-xl p-3 border border-amber-100 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-0.5">Pronunciation</p>
+              <p className="font-mono text-sm text-gray-700">/{dish.pronunciation}/</p>
+              <p className="text-xs text-teal-600 mt-0.5 italic">{dish.phonetic}</p>
             </div>
-            {/* [TTS INTEGRATION POINT] */}
-            <button
-              onClick={speak}
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${speaking ? "bg-teal-500 text-white animate-pulse" : "bg-teal-50 text-teal-600 hover:bg-teal-100 border border-teal-100"}`}
-            >
-              {speaking ? "🔊" : "🔈"}
-            </button>
+            <SpeakButton text={dish.translatedName || dish.originalName} />
           </div>
 
           {/* Description */}
           <div>
-            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">What is it?</p>
+            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">What is it?</p>
             <p className="text-sm text-gray-700 leading-relaxed">{dish.description}</p>
           </div>
 
-          {/* Ingredients */}
+          {/* Spice */}
           <div>
-            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1.5">Main Ingredients</p>
-            <div className="flex flex-wrap gap-1.5">
-              {dish.ingredients.map((ing) => (
-                <span key={ing} className="text-xs bg-white border border-gray-200 rounded-full px-2 py-0.5 text-gray-600">{ing}</span>
-              ))}
-            </div>
+            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1.5">Spice Level</p>
+            <SpiceBar level={dish.spiceLevel ?? 0} />
+            {dish.spiceNote && <p className="text-xs text-gray-500 mt-1 italic">{dish.spiceNote}</p>}
           </div>
 
+          {/* Ingredients */}
+          {dish.ingredients?.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1.5">Main Ingredients</p>
+              <div className="flex flex-wrap gap-1.5">
+                {dish.ingredients.map(ing => (
+                  <span key={ing} className="text-xs bg-white border border-gray-200 rounded-full px-2 py-0.5 text-gray-600">{ing}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Allergens */}
-          {dish.allergens.length > 0 && (
-            <div className="bg-red-50 border border-red-100 rounded-xl p-3 flex items-start gap-2">
-              <span className="text-base">⚠️</span>
+          {dish.allergens?.length > 0 && (
+            <div className="bg-red-50 border border-red-100 rounded-xl p-3 flex gap-2">
+              <span>⚠️</span>
               <div>
-                <p className="text-xs font-semibold text-red-700">Allergen Alert</p>
+                <p className="text-xs font-bold text-red-700">Allergen Warning</p>
                 <p className="text-xs text-red-600">{dish.allergens.join(", ")}</p>
               </div>
             </div>
           )}
 
-          {/* Origin */}
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span>📍</span>
-            <span>{dish.origin}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Expand Hint */}
-      <div className="px-4 py-2 border-t border-amber-50 flex items-center justify-between">
-        <span className="text-xs text-gray-400">{dish.category}</span>
-        <span className="text-xs text-amber-600">{expanded ? "▲ Less" : "▼ Details"}</span>
-      </div>
-    </div>
-  );
-}
-
-// ─── AI Scan Animation ──────────────────────────────────────
-function ScanAnimation({ onComplete }) {
-  const [step, setStep] = useState(0);
-  const steps = [
-    { icon: "🔍", text: "Detecting script language…", sub: "Identified: Mixed Indian Scripts" },
-    { icon: "✨", text: "Running OCR extraction…", sub: "Found 6 menu items" },
-    { icon: "🌐", text: "Translating dish names…", sub: "English translation ready" },
-    { icon: "🤖", text: "AI generating food context…", sub: "Adding spice levels, allergens, descriptions" },
-    { icon: "✅", text: "Your menu is ready!", sub: "" },
-  ];
-
-  useEffect(() => {
-    if (step < steps.length) {
-      const t = setTimeout(() => {
-        if (step === steps.length - 1) {
-          setTimeout(onComplete, 600);
-        } else {
-          setStep(step + 1);
-        }
-      }, 1000);
-      return () => clearTimeout(t);
-    }
-  }, [step]);
-
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] p-8">
-      <div className="w-full max-w-sm space-y-4">
-        <div className="text-center mb-8">
-          <div className="text-5xl mb-3 animate-bounce">🍽️</div>
-          <h2 className="text-xl font-bold text-gray-800">Analysing your menu…</h2>
-        </div>
-        {steps.map((s, i) => (
-          <div
-            key={i}
-            className={`flex items-center gap-3 p-3 rounded-xl transition-all duration-500 ${
-              i < step ? "bg-teal-50 border border-teal-100 opacity-60" :
-              i === step ? "bg-white border-2 border-amber-300 shadow-md" :
-              "opacity-20 bg-gray-50 border border-gray-100"
-            }`}
-          >
-            <span className="text-xl">{s.icon}</span>
-            <div className="flex-1">
-              <p className={`text-sm font-medium ${i === step ? "text-gray-800" : "text-gray-500"}`}>{s.text}</p>
-              {i <= step && s.sub && <p className="text-xs text-teal-600">{s.sub}</p>}
+          {/* Origin & culture */}
+          {dish.origin && (
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <span>📍</span><span>{dish.origin}</span>
             </div>
-            {i < step && <span className="text-teal-500">✓</span>}
-            {i === step && (
-              <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+          )}
 
-// ─── Phrase Helper Panel ────────────────────────────────────
-function PhraseHelper({ visible, onClose }) {
-  const [copied, setCopied] = useState(null);
-  const copy = (text, id) => {
-    navigator.clipboard.writeText(text).catch(() => {});
-    setCopied(id);
-    setTimeout(() => setCopied(null), 1500);
-  };
-
-  if (!visible) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
-      <div
-        className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-lg max-h-[80vh] overflow-y-auto shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-gray-800">🗣️ Traveler Phrases</h3>
-            <p className="text-xs text-gray-500">Tap to copy • Show to your server</p>
-          </div>
-          <button className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center hover:bg-gray-200 transition-colors" onClick={onClose}>✕</button>
-        </div>
-        <div className="p-4 space-y-3">
-          {TRAVELER_PHRASES.map((ph) => (
-            <div key={ph.id} className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-800 text-sm">{ph.emoji} {ph.english}</p>
-                  <p className="text-lg font-bold text-amber-800 mt-1">{ph.hindi}</p>
-                  <p className="text-xs text-amber-600 italic mt-0.5">{ph.phonetic}</p>
-                </div>
-                <button
-                  className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-colors flex-shrink-0 ${copied === ph.id ? "bg-teal-500 text-white" : "bg-white border border-amber-200 text-amber-700 hover:bg-amber-100"}`}
-                  onClick={() => copy(ph.hindi, ph.id)}
-                >
-                  {copied === ph.id ? "Copied!" : "Copy"}
-                </button>
-              </div>
+          {/* Traveler tip */}
+          {dish.travelerTip && (
+            <div className="bg-teal-50 border border-teal-100 rounded-xl p-3 flex gap-2">
+              <span>💡</span>
+              <p className="text-xs text-teal-700">{dish.travelerTip}</p>
             </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Upload Section ─────────────────────────────────────────
-function UploadSection({ onUpload }) {
-  const inputRef = useRef();
-  const [dragging, setDragging] = useState(false);
-
-  const handleFile = (file) => {
-    if (file && file.type.startsWith("image/")) onUpload(file);
-  };
-
-  return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh] p-6">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-gray-800 mb-2">Scan Your Menu</h2>
-          <p className="text-gray-500 text-sm leading-relaxed">Upload a photo of any Indian regional menu — we'll translate and explain every dish instantly.</p>
-        </div>
-
-        {/* Upload Zone */}
-        <div
-          className={`relative border-2 border-dashed rounded-3xl p-8 text-center transition-all duration-200 cursor-pointer ${
-            dragging ? "border-amber-400 bg-amber-50 scale-[1.02]" : "border-amber-200 bg-amber-50/50 hover:border-amber-400 hover:bg-amber-50"
-          }`}
-          onClick={() => inputRef.current.click()}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]); }}
-        >
-          <div className="text-5xl mb-3">📷</div>
-          <p className="font-semibold text-gray-700 mb-1">Tap to upload menu photo</p>
-          <p className="text-xs text-gray-400">JPG, PNG, HEIC supported • Max 10MB</p>
-          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files[0])} />
-        </div>
-
-        {/* Or divider */}
-        <div className="flex items-center gap-3 my-5">
-          <div className="flex-1 h-px bg-gray-200" />
-          <span className="text-xs text-gray-400 font-medium">OR</span>
-          <div className="flex-1 h-px bg-gray-200" />
-        </div>
-
-        {/* Demo Button */}
-        <button
-          className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold rounded-2xl text-sm shadow-lg hover:shadow-amber-200 hover:scale-[1.01] transition-all active:scale-[0.99]"
-          onClick={() => onUpload("demo")}
-        >
-          ✨ Try with Sample Menu
-          <span className="block text-xs font-normal opacity-80 mt-0.5">Masala Dosa, Litti Chokha, Prawn Curry & more</span>
-        </button>
-
-        {/* Supported Scripts Preview */}
-        <div className="mt-6 text-center">
-          <p className="text-xs text-gray-400 mb-2">Supports Indian scripts</p>
-          <div className="flex flex-wrap justify-center gap-2">
-            {SUPPORTED_SCRIPTS.slice(0, 6).map((s) => (
-              <span key={s.lang} className="text-sm font-medium text-gray-500 bg-gray-100 rounded-lg px-2 py-1">{s.script}</span>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Results Section ────────────────────────────────────────
-function ResultsSection({ dishes, selectedLang, onPhraseClick }) {
-  const [filter, setFilter] = useState("All");
-  const categories = ["All", "Breakfast", "Main Course", "Veg Only", "Non-Veg", "Mild"];
-  
-  const filtered = dishes.filter((d) => {
-    if (filter === "All") return true;
-    if (filter === "Veg Only") return d.isVeg;
-    if (filter === "Non-Veg") return !d.isVeg;
-    if (filter === "Mild") return d.spiceLevel <= 2;
-    return d.category.includes(filter);
-  });
-
-  return (
-    <div className="pb-24">
-      {/* Stats Banner */}
-      <div className="bg-gradient-to-r from-teal-600 to-teal-700 text-white px-5 py-4">
-        <div className="flex items-center justify-between mb-1">
-          <div>
-            <p className="text-xs opacity-80">Menu Detected</p>
-            <p className="font-bold text-lg">Mixed Indian Scripts</p>
-          </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold">{dishes.length}</p>
-            <p className="text-xs opacity-80">dishes found</p>
-          </div>
-        </div>
-        <div className="flex gap-3 mt-2">
-          <span className="text-xs bg-white/20 rounded-full px-2 py-0.5">{dishes.filter(d => d.isVeg).length} Veg</span>
-          <span className="text-xs bg-white/20 rounded-full px-2 py-0.5">{dishes.filter(d => !d.isVeg).length} Non-Veg</span>
-          <span className="text-xs bg-white/20 rounded-full px-2 py-0.5">Translated → {selectedLang}</span>
-        </div>
-      </div>
-
-      {/* Filter Chips */}
-      <div className="px-4 py-3 overflow-x-auto">
-        <div className="flex gap-2 w-max">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setFilter(cat)}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
-                filter === cat
-                  ? "bg-amber-500 text-white shadow-sm"
-                  : "bg-gray-100 text-gray-600 hover:bg-amber-50 hover:text-amber-700"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Dish Cards */}
-      <div className="px-4 space-y-3">
-        {filtered.map((dish) => (
-          <DishCard key={dish.id} dish={dish} lang={selectedLang} />
-        ))}
-      </div>
-
-      {/* Phrase Helper CTA */}
-      <div className="px-4 mt-6">
-        <button
-          onClick={onPhraseClick}
-          className="w-full bg-gradient-to-r from-teal-500 to-teal-600 text-white py-4 rounded-2xl font-bold text-sm shadow-lg hover:shadow-teal-200 transition-all flex items-center justify-center gap-2"
-        >
-          <span>🗣️</span>
-          <span>Open Traveler Phrase Helper</span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── Restaurant Mode Panel ──────────────────────────────────
-function RestaurantMode() {
-  return (
-    <div className="p-5 space-y-5 pb-24">
-      <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-3xl p-6 text-white">
-        <div className="text-3xl mb-2">🏪</div>
-        <h2 className="text-xl font-bold mb-1">Restaurant Dashboard</h2>
-        <p className="text-sm opacity-80">Upload your menu once. Get a multilingual digital menu instantly — QR-ready, shareable, always updated.</p>
-        <div className="mt-4 flex gap-2">
-          <span className="text-xs bg-white/20 rounded-full px-2 py-1">9 Languages</span>
-          <span className="text-xs bg-white/20 rounded-full px-2 py-1">QR Ready</span>
-          <span className="text-xs bg-white/20 rounded-full px-2 py-1">Auto-Update</span>
-        </div>
-      </div>
-
-      {/* Features */}
-      {[
-        { icon: "📤", title: "Upload Your Menu", desc: "PDF, image, or typed text. We handle all formats.", action: "Upload Menu" },
-        { icon: "🌐", title: "Auto-Translate to 9 Languages", desc: "All dishes translated with cultural context instantly.", action: "Configure Languages" },
-        { icon: "📱", title: "Generate QR Code", desc: "One QR — tourists scan and get their language automatically.", action: "Get QR Code" },
-        { icon: "📊", title: "Analytics Dashboard", desc: "See which dishes tourists view most. Optimise your menu.", action: "View Analytics (Coming Soon)" },
-      ].map((f) => (
-        <div key={f.title} className="bg-white border border-gray-100 rounded-2xl p-4 flex items-start gap-4 shadow-sm">
-          <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center text-2xl flex-shrink-0">{f.icon}</div>
-          <div className="flex-1">
-            <p className="font-semibold text-gray-800 text-sm">{f.title}</p>
-            <p className="text-xs text-gray-500 mt-0.5 mb-2">{f.desc}</p>
-            <button className="text-xs text-teal-600 font-semibold border border-teal-200 rounded-lg px-3 py-1 hover:bg-teal-50 transition-colors">{f.action}</button>
-          </div>
-        </div>
-      ))}
-
-      {/* Sample QR Mock */}
-      <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 text-center">
-        <p className="text-xs text-gray-500 mb-3 font-medium uppercase tracking-wide">Preview — Sample QR Menu</p>
-        <div className="w-24 h-24 mx-auto bg-white border-2 border-gray-300 rounded-xl flex items-center justify-center mb-3">
-          <div className="grid grid-cols-3 gap-0.5">
-            {Array.from({ length: 9 }).map((_, i) => (
-              <div key={i} className={`w-6 h-6 rounded-sm ${Math.random() > 0.5 ? "bg-gray-800" : "bg-white"}`} />
-            ))}
-          </div>
-        </div>
-        <p className="text-xs text-gray-500">Raju's Dhaba — Digital Menu</p>
-        <p className="text-xs text-teal-600 mt-1">menusaarthi.app/r/rajus-dhaba</p>
-      </div>
-    </div>
-  );
-}
-
-// ─── Landing / Hero ─────────────────────────────────────────
-function LandingHero({ onStart, mode, setMode }) {
-  return (
-    <div className="flex flex-col min-h-screen">
-      {/* Hero */}
-      <div className="bg-gradient-to-b from-amber-600 via-orange-500 to-amber-500 px-5 pt-10 pb-12 text-white text-center relative overflow-hidden">
-        {/* Decorative circles */}
-        <div className="absolute top-0 right-0 w-48 h-48 rounded-full bg-white/10 -translate-y-1/2 translate-x-1/4" />
-        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full bg-white/10 translate-y-1/2 -translate-x-1/4" />
-        
-        <div className="relative z-10">
-          <div className="inline-flex items-center gap-2 bg-white/20 rounded-full px-4 py-1.5 text-sm font-medium mb-5">
-            <span>🇮🇳</span>
-            <span>India's Menu Translator</span>
-          </div>
-          <h1 className="text-4xl font-black leading-tight mb-3">
-            Never be lost<br />on a menu again.
-          </h1>
-          <p className="text-base opacity-90 leading-relaxed max-w-xs mx-auto">
-            Point your camera at any Indian regional menu. Get instant translations, dish explanations, spice levels, and allergens — in your language.
-          </p>
-          <button
-            onClick={onStart}
-            className="mt-7 bg-white text-amber-600 font-bold text-base px-8 py-4 rounded-2xl shadow-xl hover:shadow-2xl transition-all active:scale-[0.98] hover:scale-[1.01]"
-          >
-            📷 Scan a Menu Now
-          </button>
-        </div>
-      </div>
-
-      {/* Feature Pills */}
-      <div className="bg-white px-4 py-5 border-b border-gray-100">
-        <div className="flex gap-2 overflow-x-auto pb-1">
-          {[
-            { icon: "🔍", text: "OCR Scanning" },
-            { icon: "🌐", text: "9 Indian Scripts" },
-            { icon: "🤖", text: "AI Explanations" },
-            { icon: "🌶️", text: "Spice Levels" },
-            { icon: "⚠️", text: "Allergen Alerts" },
-            { icon: "🔊", text: "Voice Playback" },
-          ].map((f) => (
-            <span key={f.text} className="flex items-center gap-1.5 text-xs font-medium bg-amber-50 border border-amber-100 text-amber-800 rounded-full px-3 py-1.5 whitespace-nowrap">
-              <span>{f.icon}</span>
-              <span>{f.text}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Supported Scripts */}
-      <div className="px-5 py-6 bg-gray-50">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">Supported Indian Languages</h3>
-        <div className="grid grid-cols-3 gap-2">
-          {SUPPORTED_SCRIPTS.map((s) => (
-            <div key={s.lang} className="bg-white border border-gray-100 rounded-xl p-3 text-center shadow-sm">
-              <p className="text-xl font-bold text-teal-700">{s.script}</p>
-              <p className="text-xs font-semibold text-gray-600 mt-0.5">{s.lang}</p>
-              <p className="text-xs text-gray-400">{s.region.split(",")[0]}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Sample Dishes Preview */}
-      <div className="px-5 py-6">
-        <h3 className="text-sm font-bold text-gray-700 mb-3">Example Dishes We Can Explain</h3>
-        <div className="space-y-2">
-          {SAMPLE_DISHES.slice(0, 3).map((d) => (
-            <div key={d.id} className="flex items-center gap-3 bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-              <span className="text-2xl">{d.emoji}</span>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm text-gray-800 truncate">{d.originalName}</p>
-                <p className="text-xs text-amber-600">{d.translatedName}</p>
-              </div>
-              <SpiceLevel level={d.spiceLevel} />
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={onStart}
-          className="w-full mt-4 py-3 bg-amber-50 border-2 border-amber-200 text-amber-700 font-bold rounded-2xl text-sm hover:bg-amber-100 transition-colors"
-        >
-          See All Dishes →
-        </button>
-      </div>
-
-      {/* For Restaurants */}
-      <div className="px-5 py-5 bg-teal-50 border-t border-teal-100">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="font-bold text-teal-800 text-sm">🏪 Restaurant Owner?</p>
-            <p className="text-xs text-teal-600 mt-0.5">Generate multilingual digital menus for your guests</p>
-          </div>
-          <button
-            onClick={() => setMode("restaurant")}
-            className="text-xs font-bold text-teal-700 bg-white border border-teal-200 rounded-xl px-3 py-2 hover:bg-teal-100 transition-colors flex-shrink-0 ml-3"
-          >
-            Switch →
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Main App ───────────────────────────────────────────────
-export default function App() {
-  const [screen, setScreen] = useState("landing"); // landing | upload | scanning | results
-  const [mode, setMode] = useState("traveler"); // traveler | restaurant
-  const [selectedLang, setSelectedLang] = useState("English");
-  const [phraseOpen, setPhraseOpen] = useState(false);
-  const [dishes, setDishes] = useState([]);
-  const [aiLoading, setAiLoading] = useState(false);
-
-  // [OCR INTEGRATION POINT] Replace with actual Tesseract.js or Google Vision API
-  const handleUpload = async (file) => {
-    setScreen("scanning");
-    // Simulate OCR + AI pipeline
-    // [BACKEND API INTEGRATION POINT: POST image to /api/scan-menu → returns dish list]
-    await new Promise((r) => setTimeout(r, 5500));
-    setDishes(SAMPLE_DISHES);
-    setScreen("results");
-  };
-
-  // [AI INTEGRATION POINT] — Anthropic API for dish enrichment
-  const enrichWithAI = async (rawDishes) => {
-    // This is where you'd call Claude API to enrich dish data
-    // const response = await fetch("https://api.anthropic.com/v1/messages", {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify({
-    //     model: "claude-sonnet-4-20250514",
-    //     max_tokens: 1000,
-    //     messages: [{ role: "user", content: `Explain these dishes: ${JSON.stringify(rawDishes)}` }]
-    //   })
-    // });
-    return rawDishes; // return mock for now
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 font-sans">
-      {/* Top Bar */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b border-amber-100 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">🍽️</span>
-          <span className="font-black text-amber-700 text-lg tracking-tight">MenuSaarthi</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Mode Toggle */}
-          <div className="flex bg-gray-100 rounded-xl p-0.5 text-xs font-semibold">
-            <button
-              onClick={() => { setMode("traveler"); setScreen("landing"); }}
-              className={`px-3 py-1.5 rounded-lg transition-all ${mode === "traveler" ? "bg-amber-500 text-white shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
-            >
-              🎒 Traveler
-            </button>
-            <button
-              onClick={() => setMode("restaurant")}
-              className={`px-3 py-1.5 rounded-lg transition-all ${mode === "restaurant" ? "bg-teal-600 text-white shadow-sm" : "text-gray-500 hover:text-gray-700"}`}
-            >
-              🏪 Restaurant
-            </button>
-          </div>
-
-          {/* Lang Selector */}
-          {(screen === "results" || mode === "restaurant") && (
-            <select
-              value={selectedLang}
-              onChange={(e) => setSelectedLang(e.target.value)}
-              className="text-xs border border-gray-200 rounded-xl px-2 py-1.5 bg-white text-gray-600 focus:outline-none focus:border-amber-300"
-            >
-              {LANGUAGES.map((l) => (
-                <option key={l.code} value={l.name}>{l.flag} {l.name}</option>
-              ))}
-            </select>
           )}
         </div>
-      </header>
+      )}
+    </div>
+  );
+}
 
-      {/* Main Content */}
-      <main>
-        {mode === "restaurant" ? (
-          <RestaurantMode />
-        ) : screen === "landing" ? (
-          <LandingHero onStart={() => setScreen("upload")} mode={mode} setMode={setMode} />
-        ) : screen === "upload" ? (
-          <UploadSection onUpload={handleUpload} />
-        ) : screen === "scanning" ? (
-          <ScanAnimation onComplete={() => {}} />
-        ) : screen === "results" ? (
-          <ResultsSection dishes={dishes} selectedLang={selectedLang} onPhraseClick={() => setPhraseOpen(true)} />
-        ) : null}
-      </main>
+// ── AI Call ──────────────────────────────────────────────────────
+async function analyzeMenuImage(base64Image, mediaType, targetLanguage) {
+  const systemPrompt = `You are MenuSaarthi, an expert AI for Indian food and travel. 
+Your job: given a photo of a restaurant menu (which may be in ANY Indian regional language script like Bengali, Hindi, Tamil, Telugu, Kannada, Malayalam, Marathi, Gujarati, Punjabi, Odia, etc. or even mixed scripts), you must:
 
-      {/* Bottom Nav (on results) */}
-      {screen === "results" && mode === "traveler" && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-3 flex items-center gap-3 shadow-xl z-30">
+1. Detect the language/script used in the menu
+2. Extract every dish name visible
+3. For EACH dish, use your knowledge + web search to find detailed information
+4. Return a JSON array. Each element must have these exact fields:
+   - originalName: string (dish name as it appears in the menu)
+   - scriptDetected: string (e.g. "Bengali Script", "Tamil Script", "Devanagari (Hindi)")
+   - translatedName: string (English translation)
+   - emoji: string (one relevant food emoji)
+   - pronunciation: string (IPA-style pronunciation guide)
+   - phonetic: string (simple phonetic spelling for non-linguists, e.g. "muh-SAA-leh DOH-say")
+   - description: string (2-3 sentence explanation aimed at a foreign traveler — what it is, how it tastes, when it is eaten)
+   - ingredients: array of strings (top 6-8 main ingredients)
+   - spiceLevel: number (0=no spice, 1=mild, 2=medium, 3=hot, 4=very hot, 5=extreme)
+   - spiceNote: string (brief note about the heat, e.g. "Uses green chillies, can be adjusted")
+   - dietaryTags: array of strings — choose from: Veg, Non-Veg, Egg, Vegan, Contains Nuts, Contains Dairy, Contains Gluten, Seafood
+   - allergens: array of strings (specific allergens: nuts, gluten, dairy, shellfish, egg, etc.)
+   - origin: string (region/state of origin, e.g. "West Bengal", "Tamil Nadu")
+   - travelerTip: string (one practical tip for a traveler, e.g. "Pairs perfectly with filter coffee. Ask for extra chutney.")
+
+Return ONLY a valid JSON array. No markdown, no explanation, no code fences. Just the raw JSON array starting with [ and ending with ].
+If you cannot read the menu clearly, return a JSON array with one item having originalName: "Could not read menu" and description explaining the issue.`;
+
+  const userPrompt = targetLanguage !== "English"
+    ? `Please translate the "translatedName" and "description" fields into ${targetLanguage} as well.`
+    : "";
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      system: systemPrompt,
+      messages: [{
+        role: "user",
+        content: [
+          {
+            type: "image",
+            source: { type: "base64", media_type: mediaType, data: base64Image }
+          },
+          {
+            type: "text",
+            text: `This is a photo of a restaurant menu. Please analyze it and return the full JSON array as instructed. ${userPrompt} Use web search to verify dish information where needed.`
+          }
+        ]
+      }]
+    })
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `API error ${response.status}`);
+  }
+
+  const data = await response.json();
+
+  // Collect all text blocks (including after tool use)
+  const fullText = data.content
+    .filter(b => b.type === "text")
+    .map(b => b.text)
+    .join("");
+
+  // Extract JSON array from response
+  const match = fullText.match(/\[[\s\S]*\]/);
+  if (!match) throw new Error("AI did not return valid JSON. Please try again.");
+
+  return JSON.parse(match[0]);
+}
+
+// ── Phrase Panel ─────────────────────────────────────────────────
+const PHRASES = [
+  { en: "Is this spicy?", hi: "क्या यह तीखा है?", ph: "Kya yeh teekha hai?" },
+  { en: "Does it have egg?", hi: "क्या इसमें अंडा है?", ph: "Kya ismein anda hai?" },
+  { en: "Does it have nuts?", hi: "क्या इसमें मेवे हैं?", ph: "Kya ismein meve hain?" },
+  { en: "Make it less spicy", hi: "कम तीखा बनाइए", ph: "Kam teekha banaiye" },
+  { en: "I am vegetarian", hi: "मैं शाकाहारी हूँ", ph: "Main shakahari hoon" },
+  { en: "No dairy please", hi: "डेयरी नहीं चाहिए", ph: "Dairy nahi chahiye" },
+  { en: "What's the best dish?", hi: "सबसे अच्छा क्या है?", ph: "Sabse accha kya hai?" },
+  { en: "No seafood please", hi: "समुद्री भोजन नहीं", ph: "Samudri bhojan nahi" },
+];
+
+function PhrasePanel({ onClose }) {
+  const [copied, setCopied] = useState(null);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-end" onClick={onClose}>
+      <div className="bg-white w-full max-w-lg mx-auto rounded-t-3xl max-h-[80vh] overflow-y-auto shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-white px-5 py-4 border-b border-gray-100 flex justify-between items-center">
+          <div>
+            <h3 className="font-bold text-gray-800">🗣️ Traveler Phrases</h3>
+            <p className="text-xs text-gray-500">Tap Hindi text to copy & show your server</p>
+          </div>
+          <button className="w-8 h-8 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 flex items-center justify-center font-bold" onClick={onClose}>✕</button>
+        </div>
+        <div className="p-4 space-y-3 pb-8">
+          {PHRASES.map((p, i) => (
+            <div key={i} className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+              <p className="text-sm font-semibold text-gray-700 mb-1">{p.en}</p>
+              <button
+                className={`text-xl font-bold w-full text-left transition-all ${copied === i ? "text-teal-600" : "text-amber-800 hover:text-amber-600"}`}
+                onClick={() => { navigator.clipboard.writeText(p.hi).catch(() => {}); setCopied(i); setTimeout(() => setCopied(null), 1500); }}
+              >
+                {p.hi}
+              </button>
+              <p className="text-xs text-amber-600 italic mt-0.5">{p.ph}</p>
+              {copied === i && <p className="text-xs text-teal-600 font-semibold mt-1">✓ Copied!</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ─────────────────────────────────────────────────────
+const LANGS = ["English", "French", "German", "Spanish", "Japanese", "Chinese", "Arabic", "Korean", "Portuguese"];
+
+export default function App() {
+  const [screen, setScreen] = useState("home"); // home | camera | results | error
+  const [dishes, setDishes] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("");
+  const [error, setError] = useState("");
+  const [targetLang, setTargetLang] = useState("English");
+  const [phraseOpen, setPhraseOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [detectedScript, setDetectedScript] = useState("");
+
+  const fileInputRef = useRef();
+  const videoRef = useRef();
+  const canvasRef = useRef();
+  const streamRef = useRef();
+
+  // ── Camera ──────────────────────────────────────────────────
+  const startCamera = async () => {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+      streamRef.current = stream;
+      setCameraOpen(true);
+      // Wait for next render then attach stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+      }, 100);
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        setError("Camera permission denied. Please allow camera access in your browser settings, then try again.");
+      } else if (err.name === "NotFoundError") {
+        setError("No camera found on this device. Please use the upload option instead.");
+      } else {
+        setError(`Camera error: ${err.message}`);
+      }
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraOpen(false);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+    stopCamera();
+    setPreviewUrl(dataUrl);
+    processImage(dataUrl, "image/jpeg");
+  };
+
+  // ── File Upload ──────────────────────────────────────────────
+  const handleFile = (file) => {
+    if (!file || !file.type.startsWith("image/")) {
+      setError("Please select a valid image file (JPG, PNG, HEIC, WEBP).");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setError("Image too large. Please use an image under 20MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPreviewUrl(e.target.result);
+      processImage(e.target.result, file.type);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // ── Core AI Pipeline ─────────────────────────────────────────
+  const processImage = async (dataUrl, mimeType) => {
+    setLoading(true);
+    setError("");
+    setDishes([]);
+    setScreen("loading");
+
+    try {
+      setLoadingStep("🔍 Reading menu image…");
+      await delay(400);
+      setLoadingStep("🌐 Detecting script & language…");
+      await delay(300);
+      setLoadingStep("🤖 Claude is analysing each dish…");
+
+      // Extract base64 from data URL
+      const base64 = dataUrl.split(",")[1];
+      const mediaType = (mimeType === "image/jpeg" || mimeType === "image/jpg") ? "image/jpeg"
+        : mimeType === "image/png" ? "image/png"
+        : mimeType === "image/webp" ? "image/webp"
+        : mimeType === "image/gif" ? "image/gif"
+        : "image/jpeg";
+
+      setLoadingStep("🌐 Searching the internet for dish details…");
+      const result = await analyzeMenuImage(base64, mediaType, targetLang);
+
+      if (!Array.isArray(result) || result.length === 0) {
+        throw new Error("No dishes found in the image. Please try a clearer photo.");
+      }
+
+      if (result[0]?.scriptDetected) {
+        setDetectedScript(result[0].scriptDetected);
+      }
+
+      setDishes(result);
+      setScreen("results");
+    } catch (err) {
+      console.error(err);
+      setError(err.message || "Something went wrong. Please try again.");
+      setScreen("error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  // Cleanup camera on unmount
+  useEffect(() => () => stopCamera(), []);
+
+  // ── RENDER ───────────────────────────────────────────────────
+
+  // Camera overlay
+  if (cameraOpen) {
+    return (
+      <div className="fixed inset-0 bg-black z-50 flex flex-col">
+        <div className="flex-1 relative">
+          <video
+            ref={videoRef}
+            className="absolute inset-0 w-full h-full object-cover"
+            autoPlay
+            playsInline
+            muted
+          />
+          {/* Viewfinder guide */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-80 h-52 border-2 border-white/60 rounded-2xl relative">
+              <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
+              <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
+              <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
+              <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+            </div>
+          </div>
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 text-white text-xs px-4 py-2 rounded-full">
+            Point at menu • Keep steady
+          </div>
+        </div>
+        <canvas ref={canvasRef} className="hidden" />
+        <div className="bg-black px-6 py-8 flex items-center justify-between">
           <button
-            onClick={() => setScreen("upload")}
-            className="flex-1 py-3 bg-gray-100 text-gray-600 font-semibold rounded-2xl text-sm hover:bg-gray-200 transition-colors"
+            onClick={stopCamera}
+            className="text-white/70 hover:text-white text-sm font-medium px-4 py-2 border border-white/20 rounded-xl"
           >
-            📷 Scan New
+            Cancel
+          </button>
+          <button
+            onClick={capturePhoto}
+            className="w-18 h-18 bg-white rounded-full flex items-center justify-center shadow-2xl hover:scale-95 transition-transform active:scale-90"
+            style={{ width: 72, height: 72 }}
+          >
+            <div className="w-14 h-14 rounded-full border-4 border-gray-300" />
+          </button>
+          <div className="w-20" />
+        </div>
+      </div>
+    );
+  }
+
+  // Loading screen
+  if (screen === "loading") {
+    return (
+      <div className="min-h-screen bg-amber-50 flex flex-col items-center justify-center p-8">
+        <div className="w-full max-w-sm text-center">
+          {previewUrl && (
+            <div className="w-32 h-32 mx-auto rounded-2xl overflow-hidden border-4 border-amber-200 shadow-lg mb-8">
+              <img src={previewUrl} alt="menu" className="w-full h-full object-cover" />
+            </div>
+          )}
+          <div className="relative w-16 h-16 mx-auto mb-6">
+            <div className="absolute inset-0 rounded-full border-4 border-amber-200" />
+            <div className="absolute inset-0 rounded-full border-4 border-t-amber-500 animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center text-2xl">🤖</div>
+          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">AI is reading your menu</h2>
+          <p className="text-amber-700 font-medium text-sm">{loadingStep}</p>
+          <div className="mt-6 space-y-2 text-left bg-white rounded-2xl p-4 border border-amber-100 shadow-sm">
+            {[
+              "Detecting script & language",
+              "Extracting dish names",
+              "Searching web for each dish",
+              "Building dish cards",
+            ].map((step, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm text-gray-500">
+                <div className="w-4 h-4 rounded-full border-2 border-amber-300 border-t-amber-600 animate-spin" style={{ animationDelay: `${i * 200}ms` }} />
+                {step}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Results screen
+  if (screen === "results") {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-28">
+        {/* Header */}
+        <div className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-amber-100 px-4 py-3 flex items-center gap-3">
+          <button onClick={() => setScreen("home")} className="w-9 h-9 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-700 hover:bg-amber-100 transition-colors">
+            ←
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-gray-800 text-sm truncate">Menu Analysis</p>
+            {detectedScript && <p className="text-xs text-amber-600">{detectedScript} detected</p>}
+          </div>
+          <select
+            value={targetLang}
+            onChange={e => setTargetLang(e.target.value)}
+            className="text-xs border border-gray-200 rounded-xl px-2 py-1.5 bg-white focus:outline-none focus:border-amber-400"
+          >
+            {LANGS.map(l => <option key={l}>{l}</option>)}
+          </select>
+        </div>
+
+        {/* Preview + Stats */}
+        <div className="bg-gradient-to-r from-teal-600 to-teal-700 text-white px-5 py-4 flex items-center gap-4">
+          {previewUrl && (
+            <div className="w-16 h-16 rounded-xl overflow-hidden border-2 border-white/30 flex-shrink-0">
+              <img src={previewUrl} alt="menu" className="w-full h-full object-cover" />
+            </div>
+          )}
+          <div className="flex-1">
+            <p className="font-bold text-lg">{dishes.length} dishes found</p>
+            <p className="text-sm opacity-80">
+              {dishes.filter(d => d.dietaryTags?.includes("Veg")).length} veg •{" "}
+              {dishes.filter(d => d.dietaryTags?.includes("Non-Veg")).length} non-veg
+            </p>
+            <p className="text-xs opacity-60 mt-0.5">Tap any dish to expand</p>
+          </div>
+        </div>
+
+        {/* Dish Cards */}
+        <div className="px-4 pt-4 space-y-3">
+          {dishes.map((dish, i) => (
+            <DishCard key={i} dish={dish} index={i} />
+          ))}
+        </div>
+
+        {/* Bottom bar */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-3 flex gap-3 shadow-xl z-20">
+          <button
+            onClick={() => setScreen("home")}
+            className="flex-1 py-3 bg-gray-100 text-gray-700 font-semibold rounded-2xl text-sm hover:bg-gray-200 transition-colors"
+          >
+            📷 Scan New Menu
           </button>
           <button
             onClick={() => setPhraseOpen(true)}
@@ -816,11 +581,151 @@ export default function App() {
             🗣️ Phrases
           </button>
         </div>
-      )}
 
-      {/* Phrase Helper Overlay */}
-      <PhraseHelper visible={phraseOpen} onClose={() => setPhraseOpen(false)} />
+        {phraseOpen && <PhrasePanel onClose={() => setPhraseOpen(false)} />}
+      </div>
+    );
+  }
+
+  // Error screen
+  if (screen === "error") {
+    return (
+      <div className="min-h-screen bg-amber-50 flex flex-col items-center justify-center p-8 text-center">
+        <div className="text-5xl mb-4">😕</div>
+        <h2 className="text-xl font-bold text-gray-800 mb-2">Something went wrong</h2>
+        <p className="text-red-600 text-sm bg-red-50 border border-red-100 rounded-2xl px-4 py-3 mb-6 leading-relaxed">{error}</p>
+        <button
+          onClick={() => setScreen("home")}
+          className="px-6 py-3 bg-amber-500 text-white font-bold rounded-2xl hover:bg-amber-600 transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  // ── Home Screen ────────────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Hero */}
+      <div
+        className="relative overflow-hidden px-5 pt-12 pb-14 text-white text-center"
+        style={{ background: "linear-gradient(135deg, #b45309 0%, #d97706 50%, #f59e0b 100%)" }}
+      >
+        <div className="absolute top-0 right-0 w-56 h-56 rounded-full opacity-10 bg-white -translate-y-1/3 translate-x-1/3" />
+        <div className="absolute bottom-0 left-0 w-40 h-40 rounded-full opacity-10 bg-white translate-y-1/2 -translate-x-1/4" />
+        <div className="relative">
+          <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur rounded-full px-4 py-1.5 text-sm font-semibold mb-5">
+            <span>🇮🇳</span><span>AI-Powered Menu Translator</span>
+          </div>
+          <h1 className="text-4xl font-black leading-tight mb-3 tracking-tight">
+            Understand<br />any menu<br />instantly.
+          </h1>
+          <p className="text-sm opacity-90 leading-relaxed max-w-xs mx-auto">
+            Point your camera at any Indian menu — in Bengali, Tamil, Hindi, Kannada, or any regional script. AI reads, translates, and explains everything.
+          </p>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="px-5 -mt-6 relative z-10 space-y-3">
+        {/* Camera */}
+        <button
+          onClick={startCamera}
+          className="w-full bg-gray-900 text-white py-4 px-5 rounded-2xl font-bold text-base shadow-xl hover:bg-gray-800 active:scale-[0.98] transition-all flex items-center gap-4"
+        >
+          <div className="w-12 h-12 rounded-xl bg-amber-500 flex items-center justify-center text-2xl flex-shrink-0">📷</div>
+          <div className="text-left">
+            <p className="font-bold">Open Camera</p>
+            <p className="text-xs text-gray-400 font-normal">Point at a physical menu</p>
+          </div>
+        </button>
+
+        {/* Upload */}
+        <button
+          onClick={() => fileInputRef.current.click()}
+          className="w-full bg-white border-2 border-amber-200 text-gray-800 py-4 px-5 rounded-2xl font-bold text-base hover:border-amber-400 hover:bg-amber-50 active:scale-[0.98] transition-all flex items-center gap-4 shadow-sm"
+        >
+          <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center text-2xl flex-shrink-0">🖼️</div>
+          <div className="text-left">
+            <p className="font-bold">Upload Photo</p>
+            <p className="text-xs text-gray-400 font-normal">JPG, PNG, HEIC, WebP</p>
+          </div>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={e => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ""; }}
+        />
+
+        {/* Language */}
+        <div className="bg-teal-50 border border-teal-100 rounded-2xl px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span>🌐</span>
+            <span className="text-sm font-semibold text-teal-800">Translate to</span>
+          </div>
+          <select
+            value={targetLang}
+            onChange={e => setTargetLang(e.target.value)}
+            className="bg-white border border-teal-200 rounded-xl px-3 py-1.5 text-sm font-semibold text-teal-700 focus:outline-none focus:border-teal-400"
+          >
+            {LANGS.map(l => <option key={l}>{l}</option>)}
+          </select>
+        </div>
+
+        {/* Error inline */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-sm text-red-700">
+            ⚠️ {error}
+          </div>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div className="px-5 py-8 mt-4">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">How it works</h3>
+        <div className="space-y-3">
+          {[
+            { icon: "📷", title: "Scan or upload", desc: "Take a photo of the menu — any language, any script" },
+            { icon: "🤖", title: "AI reads the menu", desc: "Claude detects the script, reads every dish name" },
+            { icon: "🌐", title: "Live web search", desc: "Searches the internet for real dish information" },
+            { icon: "🍽️", title: "Full dish guide", desc: "Pronunciation, ingredients, spice level, allergens — all explained" },
+          ].map((step, i) => (
+            <div key={i} className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-100 flex items-center justify-center text-xl flex-shrink-0">{step.icon}</div>
+              <div className="flex-1 pt-1">
+                <p className="text-sm font-bold text-gray-800">{step.title}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{step.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Supported scripts */}
+      <div className="px-5 pb-8">
+        <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">Supported Scripts</h3>
+        <div className="flex flex-wrap gap-2">
+          {["বাংলা", "हिंदी", "தமிழ்", "తెలుగు", "ಕನ್ನಡ", "മലയാളം", "मराठी", "ગુજરાતી", "ਪੰਜਾਬੀ", "ଓଡ଼ିଆ"].map(s => (
+            <span key={s} className="bg-gray-100 text-gray-700 font-bold text-sm px-3 py-1.5 rounded-xl border border-gray-200">{s}</span>
+          ))}
+        </div>
+      </div>
+
+      {/* Phrase helper CTA */}
+      <div className="px-5 pb-10">
+        <button
+          onClick={() => setPhraseOpen(true)}
+          className="w-full bg-teal-600 text-white py-4 rounded-2xl font-bold text-sm hover:bg-teal-700 transition-colors flex items-center justify-center gap-2"
+        >
+          <span>🗣️</span>
+          <span>Open Traveler Phrase Helper</span>
+        </button>
+      </div>
+
+      {phraseOpen && <PhrasePanel onClose={() => setPhraseOpen(false)} />}
     </div>
   );
 }
-
