@@ -1,241 +1,228 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 
-// ─────────────────────────────────────────────
-// CORE AI ENGINE
-// Sends image to Claude → detects language → searches web → returns full dish data
-// ─────────────────────────────────────────────
-async function analyzeMenuImage(base64Image, targetLanguage = "English") {
-  const prompt = `You are MenuSaarthi, an expert AI food guide for travelers visiting India.
+/* ============================================================
+   MenuSaarthi — AI-Powered Indian Menu Translator
+   Hosted 100% on GitHub Pages — no external server needed.
 
-You will receive an image of a restaurant menu or a dish name written in ANY Indian regional language (Bengali, Hindi, Tamil, Telugu, Kannada, Malayalam, Marathi, Gujarati, Punjabi, Odia, etc.) or even handwritten text.
+   HOW THE API KEY WORKS:
+   - You store ANTHROPIC_API_KEY in GitHub → Settings → Secrets → Actions
+   - GitHub Actions bakes it into the JS bundle at build time via VITE_ANTHROPIC_KEY
+   - The app calls Anthropic directly from the browser using that key
+   - NOTE: This means the key is inside the built JS file. Fine for a personal
+     demo app. If you ever make this public/commercial, move to a backend.
+   ============================================================ */
 
-Your job:
-1. Detect what language/script the menu is written in
-2. Read ALL the dish names from the image
-3. For EACH dish, use your deep knowledge to provide complete information
+// Injected at build time by GitHub Actions from your repository secret.
+// Never hardcode your key here — always use the env variable.
+const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
 
-Return a JSON object in this EXACT format (no markdown, no backticks, just raw JSON):
+// ── THEME TOKENS ─────────────────────────────────────────────
+const T = {
+  bg0: "#0c0a09",       // deepest bg
+  bg1: "#171412",       // card bg
+  bg2: "#1f1b18",       // elevated card
+  bg3: "#2a2420",       // input/hover
+  border: "#2e2924",    // subtle border
+  borderHover: "#3d3530",
+  amber: "#f59e0b",
+  amberDim: "#d97706",
+  amberBg: "#1c1509",
+  teal: "#14b8a6",
+  tealBg: "#071413",
+  text1: "#fafaf9",
+  text2: "#a8a29e",
+  text3: "#57534e",
+  green: "#4ade80",
+  red: "#f87171",
+  spice: ["", "#4ade80", "#a3e635", "#facc15", "#fb923c", "#ef4444"],
+  spiceLabel: ["", "No Spice", "Mild", "Medium", "Hot", "🔥 Very Hot"],
+};
+
+// ── AI ANALYSIS ───────────────────────────────────────────────
+async function analyzeMenuImage(base64, targetLang) {
+  const prompt = `You are MenuSaarthi — an expert AI food guide for international travelers visiting India.
+
+Analyze this restaurant menu image carefully.
+
+1. Detect the language and script (Hindi/Bengali/Tamil/Telugu/Kannada/Malayalam/Marathi/Gujarati/Punjabi/Odia/Urdu or mixed)
+2. Extract EVERY dish/item name visible
+3. For each dish provide rich traveler-focused information
+
+Respond ONLY with this exact JSON (no markdown fences, no extra text):
 {
-  "detectedLanguage": "name of the detected language",
-  "detectedScript": "name of the script",
+  "detectedLanguage": "Hindi",
+  "detectedScript": "Devanagari",
+  "restaurantType": "South Indian / North Indian / Bengali / etc.",
   "dishes": [
     {
       "id": 1,
-      "originalName": "dish name in original script",
-      "transliteration": "romanized phonetic spelling",
-      "translatedName": "English translation of the name",
-      "pronunciation": "phonetic guide e.g. muh-SAA-leh DOH-say",
-      "description": "2-3 sentence food guide description explaining what the dish is, how it tastes, how it's served - as if explaining to a foreign traveler",
-      "origin": "region/state of India this dish comes from",
-      "mainIngredients": ["ingredient1", "ingredient2", "ingredient3", "ingredient4"],
-      "isVeg": true or false,
-      "containsEgg": true or false,
-      "containsDairy": true or false,
-      "containsGluten": true or false,
-      "containsNuts": true or false,
-      "containsSeafood": true or false,
-      "containsMeat": true or false,
-      "spiceLevel": 1 to 5 (1=no spice, 2=mild, 3=medium, 4=hot, 5=very hot),
-      "spiceLevelLabel": "No Spice / Mild / Medium / Hot / Very Hot",
-      "dishTags": ["e.g. crispy", "creamy", "fried", "steamed", "light", "heavy", "sweet", "tangy", "festive"],
-      "mealType": "Breakfast / Lunch / Dinner / Snack / Dessert / Drink",
-      "estimatedCalories": "approximate e.g. 350-450 kcal",
-      "allergenWarning": "brief allergen note or null",
-      "funFact": "one interesting cultural or historical fact about this dish",
-      "travelerTip": "one practical tip for the traveler ordering this dish"
+      "originalName": "original text from menu",
+      "transliteration": "Romanized pronunciation guide",
+      "translatedName": "Name in ${targetLang}",
+      "pronunciation": "syllable-by-syllable e.g. doh-SAAH",
+      "description": "2-3 sentences describing what this dish is, how it tastes, and how it is served — written for someone who has never tried Indian food",
+      "origin": "State/region e.g. Tamil Nadu",
+      "mainIngredients": ["Rice", "Lentils", "Coconut"],
+      "cookingMethod": "Steamed / Fried / Grilled / Curried / Baked / Raw",
+      "isVeg": true,
+      "containsEgg": false,
+      "containsDairy": false,
+      "containsGluten": false,
+      "containsNuts": false,
+      "containsSeafood": false,
+      "containsMeat": false,
+      "spiceLevel": 2,
+      "spiceLevelLabel": "Mild",
+      "dishTags": ["crispy", "light", "street food"],
+      "mealType": "Breakfast",
+      "estimatedCalories": "300-400 kcal",
+      "allergenWarning": "Contains gluten" or null,
+      "pairsWith": "Sambar and coconut chutney",
+      "funFact": "One interesting historical or cultural fact",
+      "travelerTip": "Practical ordering tip for a foreign visitor",
+      "mustTry": true or false
     }
   ]
 }
 
-If you cannot read the image clearly, still try your best. If it's not a menu, say so in detectedLanguage field as "Not a menu image" and return empty dishes array.
-Target language for translated names: ${targetLanguage}`;
+spiceLevel: 1=none, 2=mild, 3=medium, 4=hot, 5=extreme
+mustTry: mark the 1-2 most iconic/recommended dishes as true
+If the image is not a menu, set detectedLanguage to "NOT_A_MENU".`;
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  if (!ANTHROPIC_KEY) throw new Error("API key not configured. Add ANTHROPIC_KEY to GitHub Actions secrets.");
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4000,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: "image/jpeg", data: base64Image },
-            },
-            { type: "text", text: prompt },
-          ],
-        },
-      ],
+      model: "claude-opus-4-5",
+      max_tokens: 4096,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
+          { type: "text", text: prompt },
+        ],
+      }],
     }),
   });
 
-  const data = await response.json();
-  if (data.error) throw new Error(data.error.message);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error || `Server error ${res.status}`);
+  }
 
-  // Extract text from all content blocks
-  const fullText = data.content
-    .map((block) => (block.type === "text" ? block.text : ""))
-    .join("");
-
-  // Parse JSON from response
-  const jsonMatch = fullText.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Could not parse AI response");
-  return JSON.parse(jsonMatch[0]);
+  const data = await res.json();
+  const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("AI returned an unexpected response. Please try again.");
+  const parsed = JSON.parse(match[0]);
+  if (parsed.detectedLanguage === "NOT_A_MENU") throw new Error("This doesn't look like a menu. Please take a clearer photo of a restaurant menu.");
+  return parsed;
 }
 
-// ─────────────────────────────────────────────
-// TTS - speaks the dish name aloud
-// ─────────────────────────────────────────────
-function speakText(text) {
-  if (!("speechSynthesis" in window)) return;
+// ── TTS ───────────────────────────────────────────────────────
+function speak(text) {
+  if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.rate = 0.85;
-  u.pitch = 1;
+  u.rate = 0.82; u.pitch = 1.05;
   window.speechSynthesis.speak(u);
 }
 
-// ─────────────────────────────────────────────
-// SPICE METER
-// ─────────────────────────────────────────────
-function SpiceMeter({ level }) {
-  const colors = ["", "#4ade80", "#a3e635", "#facc15", "#f97316", "#ef4444"];
-  const labels = ["", "No Spice", "Mild", "Medium", "Hot", "🔥 Very Hot"];
+// ── SMALL COMPONENTS ─────────────────────────────────────────
+
+function SpiceDots({ level }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="flex gap-1">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <div
-            key={i}
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: i <= level ? colors[level] : "#e5e7eb",
-              transition: "background 0.3s",
-            }}
-          />
+    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <div style={{ display: "flex", gap: 3 }}>
+        {[1,2,3,4,5].map(i => (
+          <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: i <= level ? T.spice[level] : T.bg3, transition: "background .3s" }} />
         ))}
       </div>
-      <span style={{ fontSize: 12, color: colors[level] || "#9ca3af", fontWeight: 600 }}>
-        {labels[level]}
-      </span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: T.spice[level] || T.text3 }}>{T.spiceLabel[level] || ""}</span>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// DIETARY ICONS ROW
-// ─────────────────────────────────────────────
-function DietaryIcons({ dish }) {
-  const tags = [];
-  if (dish.isVeg) tags.push({ icon: "🟢", label: "Veg", bg: "#dcfce7", color: "#15803d" });
-  else tags.push({ icon: "🔴", label: "Non-Veg", bg: "#fee2e2", color: "#b91c1c" });
-  if (dish.containsEgg) tags.push({ icon: "🥚", label: "Egg", bg: "#fef9c3", color: "#a16207" });
-  if (dish.containsDairy) tags.push({ icon: "🥛", label: "Dairy", bg: "#eff6ff", color: "#1d4ed8" });
-  if (dish.containsGluten) tags.push({ icon: "🌾", label: "Gluten", bg: "#fef3c7", color: "#92400e" });
-  if (dish.containsNuts) tags.push({ icon: "🥜", label: "Nuts", bg: "#fdf4ff", color: "#7e22ce" });
-  if (dish.containsSeafood) tags.push({ icon: "🦐", label: "Seafood", bg: "#ecfeff", color: "#0e7490" });
-  if (dish.containsMeat) tags.push({ icon: "🥩", label: "Meat", bg: "#fff1f2", color: "#be123c" });
-
+function Badge({ icon, label, bg, color }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-      {tags.map((t) => (
-        <span
-          key={t.label}
-          style={{
-            background: t.bg,
-            color: t.color,
-            fontSize: 11,
-            fontWeight: 700,
-            padding: "3px 8px",
-            borderRadius: 20,
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-          }}
-        >
-          {t.icon} {t.label}
-        </span>
-      ))}
-    </div>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 20, background: bg, color: color, letterSpacing: "0.02em" }}>
+      {icon} {label}
+    </span>
   );
 }
 
-// ─────────────────────────────────────────────
-// DISH CARD
-// ─────────────────────────────────────────────
-function DishCard({ dish, index }) {
+function DietBadges({ dish }) {
+  const badges = [];
+  if (dish.isVeg) badges.push(<Badge key="veg" icon="●" label="VEG" bg="#052e16" color="#4ade80" />);
+  else badges.push(<Badge key="nv" icon="●" label="NON-VEG" bg="#2d0a0a" color="#f87171" />);
+  if (dish.containsEgg) badges.push(<Badge key="egg" icon="🥚" label="EGG" bg="#1c1a05" color="#facc15" />);
+  if (dish.containsDairy) badges.push(<Badge key="dairy" icon="🥛" label="DAIRY" bg="#071a2e" color="#60a5fa" />);
+  if (dish.containsGluten) badges.push(<Badge key="gluten" icon="🌾" label="GLUTEN" bg="#1c0f05" color="#fb923c" />);
+  if (dish.containsNuts) badges.push(<Badge key="nuts" icon="🥜" label="NUTS" bg="#17082a" color="#c084fc" />);
+  if (dish.containsSeafood) badges.push(<Badge key="sea" icon="🦐" label="SEAFOOD" bg="#071418" color="#22d3ee" />);
+  if (dish.containsMeat) badges.push(<Badge key="meat" icon="🥩" label="MEAT" bg="#2d0a0a" color="#fb7185" />);
+  return <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{badges}</div>;
+}
+
+// ── DISH CARD ─────────────────────────────────────────────────
+function DishCard({ dish, idx }) {
   const [open, setOpen] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
-  const handleSpeak = (e) => {
+  const handleSpeak = e => {
     e.stopPropagation();
-    setSpeaking(true);
-    speakText(dish.transliteration || dish.originalName);
-    setTimeout(() => setSpeaking(false), 2500);
+    setPlaying(true);
+    speak(dish.transliteration || dish.originalName);
+    setTimeout(() => setPlaying(false), 2800);
   };
-
-  const mealColors = {
-    Breakfast: { bg: "#fff7ed", border: "#fed7aa", accent: "#c2410c" },
-    Lunch: { bg: "#f0fdf4", border: "#bbf7d0", accent: "#15803d" },
-    Dinner: { bg: "#f5f3ff", border: "#ddd6fe", accent: "#6d28d9" },
-    Snack: { bg: "#fffbeb", border: "#fde68a", accent: "#b45309" },
-    Dessert: { bg: "#fdf2f8", border: "#f9a8d4", accent: "#be185d" },
-    Drink: { bg: "#eff6ff", border: "#bfdbfe", accent: "#1d4ed8" },
-  };
-  const colors = mealColors[dish.mealType] || mealColors.Lunch;
 
   return (
     <div
-      onClick={() => setOpen(!open)}
+      onClick={() => setOpen(o => !o)}
       style={{
-        background: "white",
+        background: open ? T.bg2 : T.bg1,
+        border: `1px solid ${open ? "#3d3530" : T.border}`,
         borderRadius: 20,
-        border: `1.5px solid ${open ? colors.border : "#f1f5f9"}`,
         overflow: "hidden",
         cursor: "pointer",
-        transition: "all 0.25s ease",
-        boxShadow: open ? "0 8px 30px rgba(0,0,0,0.08)" : "0 2px 8px rgba(0,0,0,0.04)",
-        animationDelay: `${index * 0.08}s`,
-        animation: "slideUp 0.4s ease both",
+        transition: "all .25s ease",
+        animation: `slideUp .45s ease both`,
+        animationDelay: `${idx * 0.06}s`,
+        position: "relative",
       }}
     >
-      {/* Card Header */}
+      {/* Must-try ribbon */}
+      {dish.mustTry && (
+        <div style={{ position: "absolute", top: 14, right: 14, background: T.amber, color: "#000", fontSize: 9, fontWeight: 900, padding: "3px 8px", borderRadius: 20, letterSpacing: "0.05em", zIndex: 1 }}>
+          ★ MUST TRY
+        </div>
+      )}
+
+      {/* Header */}
       <div style={{ padding: "16px 16px 12px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Meal type badge */}
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                background: colors.bg,
-                color: colors.accent,
-                border: `1px solid ${colors.border}`,
-                padding: "2px 8px",
-                borderRadius: 20,
-                display: "inline-block",
-                marginBottom: 6,
-                letterSpacing: "0.05em",
-                textTransform: "uppercase",
-              }}
-            >
-              {dish.mealType || "Dish"}
+            {/* Meal type */}
+            <span style={{ fontSize: 9, fontWeight: 800, color: T.amberDim, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+              {dish.mealType || "DISH"} · {dish.cookingMethod || ""}
             </span>
             {/* Original name */}
-            <p style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", margin: 0, fontFamily: "'Noto Sans', sans-serif", lineHeight: 1.2 }}>
+            <p style={{ fontSize: 22, fontWeight: 800, color: T.text1, margin: "3px 0 1px", fontFamily: "'Noto Sans', sans-serif", lineHeight: 1.15 }}>
               {dish.originalName}
             </p>
             {/* Transliteration */}
-            <p style={{ fontSize: 12, color: "#f59e0b", fontWeight: 600, margin: "2px 0 0", fontFamily: "monospace" }}>
+            <p style={{ fontSize: 12, color: T.amber, fontWeight: 600, fontFamily: "monospace", margin: "0 0 3px" }}>
               {dish.transliteration}
             </p>
             {/* English name */}
-            <p style={{ fontSize: 15, color: "#475569", fontWeight: 600, margin: "4px 0 0" }}>
+            <p style={{ fontSize: 16, color: T.text2, fontWeight: 600, margin: 0 }}>
               {dish.translatedName}
             </p>
           </div>
@@ -244,49 +231,32 @@ function DishCard({ dish, index }) {
           <button
             onClick={handleSpeak}
             style={{
-              width: 44,
-              height: 44,
-              borderRadius: "50%",
-              background: speaking ? "#f59e0b" : "#fff7ed",
-              border: `2px solid ${speaking ? "#f59e0b" : "#fed7aa"}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              flexShrink: 0,
-              transition: "all 0.2s",
-              fontSize: 18,
-              animation: speaking ? "pulse 0.6s infinite" : "none",
+              width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
+              background: playing ? T.amber : T.bg3,
+              border: `1.5px solid ${playing ? T.amber : T.border}`,
+              color: playing ? "#000" : T.amber,
+              fontSize: 17, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "all .2s",
+              animation: playing ? "pulseBtn .6s infinite" : "none",
             }}
             title="Hear pronunciation"
           >
-            {speaking ? "🔊" : "🔈"}
+            {playing ? "🔊" : "🔈"}
           </button>
         </div>
 
-        {/* Spice + dietary row */}
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-          <SpiceMeter level={dish.spiceLevel || 1} />
-          <DietaryIcons dish={dish} />
+        {/* Spice + Diet */}
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 7 }}>
+          <SpiceDots level={dish.spiceLevel || 1} />
+          <DietBadges dish={dish} />
         </div>
 
-        {/* Quick tags */}
+        {/* Tags */}
         {dish.dishTags?.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
-            {dish.dishTags.map((t) => (
-              <span
-                key={t}
-                style={{
-                  fontSize: 11,
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
-                  color: "#64748b",
-                  padding: "2px 8px",
-                  borderRadius: 12,
-                  fontWeight: 500,
-                  textTransform: "capitalize",
-                }}
-              >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
+            {dish.dishTags.map(t => (
+              <span key={t} style={{ fontSize: 10, background: T.bg3, border: `1px solid ${T.border}`, color: T.text2, padding: "2px 8px", borderRadius: 12, textTransform: "capitalize", fontWeight: 500 }}>
                 {t}
               </span>
             ))}
@@ -294,171 +264,82 @@ function DishCard({ dish, index }) {
         )}
       </div>
 
-      {/* Expand / collapse indicator */}
-      <div
-        style={{
-          borderTop: "1px solid #f8fafc",
-          padding: "6px 16px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: 11, color: "#94a3b8" }}>{dish.origin}</span>
-        <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 700 }}>
-          {open ? "▲ Less" : "▼ Full Details"}
-        </span>
+      {/* Expand hint */}
+      <div style={{ padding: "7px 16px", borderTop: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: T.text3 }}>📍 {dish.origin}</span>
+        <span style={{ fontSize: 11, color: T.amberDim, fontWeight: 700 }}>{open ? "▲ Less" : "▼ Full Details"}</span>
       </div>
 
       {/* Expanded body */}
       {open && (
-        <div style={{ padding: "0 16px 16px", borderTop: "1px solid #fef3c7" }}>
-          {/* Pronunciation guide */}
-          <div
-            style={{
-              background: "#fffbeb",
-              border: "1px solid #fde68a",
-              borderRadius: 12,
-              padding: "10px 14px",
-              marginTop: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <span style={{ fontSize: 20 }}>👄</span>
-            <div>
-              <p style={{ fontSize: 10, color: "#92400e", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
-                How to pronounce
-              </p>
-              <p style={{ fontSize: 15, fontFamily: "monospace", color: "#78350f", fontWeight: 700, margin: "2px 0 0" }}>
-                {dish.pronunciation}
-              </p>
+        <div style={{ padding: "0 16px 18px", borderTop: `1px solid ${T.bg3}` }}>
+
+          {/* Pronunciation card */}
+          <div style={{ background: T.amberBg, border: `1px solid ${T.amberDim}40`, borderRadius: 14, padding: "12px 14px", marginTop: 14, display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 22 }}>👄</span>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 10, color: T.amberDim, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 }}>How to say it</p>
+              <p style={{ fontSize: 16, fontFamily: "monospace", color: T.amber, fontWeight: 700, margin: "3px 0 0" }}>/{dish.pronunciation}/</p>
             </div>
-            <button
-              onClick={handleSpeak}
-              style={{
-                marginLeft: "auto",
-                background: "#f59e0b",
-                border: "none",
-                borderRadius: 8,
-                padding: "6px 10px",
-                color: "white",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              ▶ Play
-            </button>
+            <button onClick={handleSpeak} style={{ background: T.amber, border: "none", borderRadius: 10, padding: "7px 12px", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>▶ Play</button>
           </div>
 
           {/* Description */}
-          <div style={{ marginTop: 12 }}>
-            <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", margin: "0 0 4px" }}>
-              What is it?
-            </p>
-            <p style={{ fontSize: 14, color: "#334155", lineHeight: 1.7, margin: 0 }}>
-              {dish.description}
-            </p>
+          <div style={{ marginTop: 14 }}>
+            <p style={{ fontSize: 10, color: T.text3, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 6px" }}>What is it?</p>
+            <p style={{ fontSize: 14, color: T.text2, lineHeight: 1.75, margin: 0 }}>{dish.description}</p>
           </div>
 
           {/* Ingredients */}
-          <div style={{ marginTop: 12 }}>
-            <p style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, textTransform: "uppercase", margin: "0 0 6px" }}>
-              Main Ingredients
-            </p>
+          <div style={{ marginTop: 14 }}>
+            <p style={{ fontSize: 10, color: T.text3, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 8px" }}>Main Ingredients</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {dish.mainIngredients?.map((ing) => (
-                <span
-                  key={ing}
-                  style={{
-                    fontSize: 12,
-                    background: "#f1f5f9",
-                    border: "1px solid #e2e8f0",
-                    color: "#475569",
-                    padding: "3px 10px",
-                    borderRadius: 20,
-                    fontWeight: 500,
-                  }}
-                >
-                  {ing}
-                </span>
+              {dish.mainIngredients?.map(ing => (
+                <span key={ing} style={{ fontSize: 12, background: T.bg3, border: `1px solid ${T.border}`, color: T.text2, padding: "4px 10px", borderRadius: 20, fontWeight: 500 }}>{ing}</span>
               ))}
             </div>
           </div>
 
+          {/* Pairs with */}
+          {dish.pairsWith && (
+            <div style={{ marginTop: 12, background: T.tealBg, border: `1px solid ${T.teal}30`, borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 16 }}>🍽️</span>
+              <div>
+                <p style={{ fontSize: 10, color: T.teal, fontWeight: 700, textTransform: "uppercase", margin: 0 }}>Best paired with</p>
+                <p style={{ fontSize: 13, color: T.text2, margin: "2px 0 0" }}>{dish.pairsWith}</p>
+              </div>
+            </div>
+          )}
+
           {/* Calories */}
           {dish.estimatedCalories && (
-            <div
-              style={{
-                marginTop: 12,
-                background: "#f0fdf4",
-                border: "1px solid #bbf7d0",
-                borderRadius: 10,
-                padding: "8px 12px",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
+            <div style={{ marginTop: 10, background: T.bg3, border: `1px solid ${T.border}`, borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 16 }}>🔥</span>
-              <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>
-                {dish.estimatedCalories}
-              </span>
+              <span style={{ fontSize: 13, color: T.text2, fontWeight: 600 }}>{dish.estimatedCalories}</span>
             </div>
           )}
 
-          {/* Allergen warning */}
+          {/* Allergen */}
           {dish.allergenWarning && (
-            <div
-              style={{
-                marginTop: 10,
-                background: "#fff1f2",
-                border: "1px solid #fecdd3",
-                borderRadius: 10,
-                padding: "8px 12px",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
+            <div style={{ marginTop: 10, background: "#2d0a0a", border: "1px solid #7f1d1d", borderRadius: 12, padding: "9px 12px", display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 16 }}>⚠️</span>
-              <span style={{ fontSize: 12, color: "#be123c", fontWeight: 600 }}>{dish.allergenWarning}</span>
+              <span style={{ fontSize: 12, color: "#fca5a5", fontWeight: 600 }}>{dish.allergenWarning}</span>
             </div>
           )}
 
-          {/* Fun fact + traveler tip */}
+          {/* Fun fact */}
           {dish.funFact && (
-            <div
-              style={{
-                marginTop: 10,
-                background: "#fdf4ff",
-                border: "1px solid #e9d5ff",
-                borderRadius: 10,
-                padding: "8px 12px",
-              }}
-            >
-              <p style={{ fontSize: 10, color: "#7e22ce", fontWeight: 700, textTransform: "uppercase", margin: "0 0 3px" }}>
-                Fun Fact
-              </p>
-              <p style={{ fontSize: 13, color: "#4c1d95", margin: 0, lineHeight: 1.5 }}>{dish.funFact}</p>
+            <div style={{ marginTop: 10, background: "#17082a", border: "1px solid #6b21a820", borderRadius: 12, padding: "10px 12px" }}>
+              <p style={{ fontSize: 10, color: "#c084fc", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 4px" }}>Fun Fact</p>
+              <p style={{ fontSize: 13, color: "#d8b4fe", margin: 0, lineHeight: 1.6 }}>{dish.funFact}</p>
             </div>
           )}
+
+          {/* Traveler tip */}
           {dish.travelerTip && (
-            <div
-              style={{
-                marginTop: 10,
-                background: "#eff6ff",
-                border: "1px solid #bfdbfe",
-                borderRadius: 10,
-                padding: "8px 12px",
-              }}
-            >
-              <p style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 700, textTransform: "uppercase", margin: "0 0 3px" }}>
-                🧳 Traveler Tip
-              </p>
-              <p style={{ fontSize: 13, color: "#1e3a8a", margin: 0, lineHeight: 1.5 }}>{dish.travelerTip}</p>
+            <div style={{ marginTop: 10, background: "#071a2e", border: "1px solid #1d4ed820", borderRadius: 12, padding: "10px 12px" }}>
+              <p style={{ fontSize: 10, color: "#60a5fa", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", margin: "0 0 4px" }}>🧳 Traveler Tip</p>
+              <p style={{ fontSize: 13, color: "#93c5fd", margin: 0, lineHeight: 1.6 }}>{dish.travelerTip}</p>
             </div>
           )}
         </div>
@@ -467,210 +348,108 @@ function DishCard({ dish, index }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// CAMERA COMPONENT
-// ─────────────────────────────────────────────
-function CameraView({ onCapture, onClose }) {
+// ── CAMERA ────────────────────────────────────────────────────
+function Camera({ onCapture, onClose }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [ready, setReady] = useState(false);
-  const [facingMode, setFacingMode] = useState("environment");
-  const [error, setError] = useState(null);
+  const [facing, setFacing] = useState("environment");
+  const [err, setErr] = useState(null);
 
-  const startCamera = useCallback(async (mode) => {
+  const start = useCallback(async (mode) => {
+    setErr(null); setReady(false);
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: mode, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: mode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
       });
-      streamRef.current = stream;
+      streamRef.current = s;
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play();
-          setReady(true);
-          setError(null);
-        };
+        videoRef.current.srcObject = s;
+        await videoRef.current.play();
+        setReady(true);
       }
-    } catch (err) {
-      setError("Camera access denied. Please allow camera permissions and try again.");
+    } catch (e) {
+      setErr(e.name === "NotAllowedError"
+        ? "Camera permission denied.\nPlease allow camera access in your browser settings."
+        : "Camera error: " + e.message);
     }
   }, []);
 
-  useEffect(() => {
-    startCamera(facingMode);
-    return () => {
-      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
-    };
-  }, [facingMode]);
+  useEffect(() => { start(facing); return () => streamRef.current?.getTracks().forEach(t => t.stop()); }, [facing]);
 
   const capture = () => {
-    const video = videoRef.current;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    const base64 = canvas.toDataURL("image/jpeg", 0.9).split(",")[1];
-    onCapture(base64, canvas.toDataURL("image/jpeg"));
-    if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+    const v = videoRef.current;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext("2d").drawImage(v, 0, 0);
+    const preview = c.toDataURL("image/jpeg", 0.92);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    onCapture(preview.split(",")[1], preview);
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "#000",
-        zIndex: 1000,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 2000, display: "flex", flexDirection: "column" }}>
       {/* Top bar */}
-      <div
-        style={{
-          padding: "16px 20px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          background: "rgba(0,0,0,0.6)",
-          zIndex: 10,
-        }}
-      >
-        <button
-          onClick={onClose}
-          style={{
-            background: "rgba(255,255,255,0.15)",
-            border: "none",
-            color: "white",
-            padding: "8px 16px",
-            borderRadius: 20,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: 14,
-          }}
-        >
-          ✕ Cancel
-        </button>
-        <span style={{ color: "white", fontWeight: 700, fontSize: 14 }}>📷 Point at a menu</span>
-        <button
-          onClick={() => setFacingMode((m) => (m === "environment" ? "user" : "environment"))}
-          style={{
-            background: "rgba(255,255,255,0.15)",
-            border: "none",
-            color: "white",
-            padding: "8px 16px",
-            borderRadius: 20,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontSize: 14,
-          }}
-        >
-          🔄 Flip
-        </button>
+      <div style={{ padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "rgba(0,0,0,0.8)", zIndex: 10 }}>
+        <button onClick={onClose} style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", padding: "9px 18px", borderRadius: 22, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>✕ Cancel</button>
+        <span style={{ color: "rgba(255,255,255,0.85)", fontWeight: 700, fontSize: 14, letterSpacing: "0.03em" }}>POINT AT MENU</span>
+        <button onClick={() => setFacing(f => f === "environment" ? "user" : "environment")} style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", color: "#fff", padding: "9px 18px", borderRadius: 22, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🔄 Flip</button>
       </div>
 
       {/* Video */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        {error ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: "white",
-              textAlign: "center",
-              padding: 24,
-              flexDirection: "column",
-              gap: 12,
-            }}
-          >
-            <span style={{ fontSize: 48 }}>📷</span>
-            <p style={{ fontSize: 15, color: "#fca5a5" }}>{error}</p>
+        {err ? (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: 32 }}>
+            <span style={{ fontSize: 56 }}>📷</span>
+            <p style={{ color: "#fca5a5", fontSize: 15, textAlign: "center", lineHeight: 1.6, whiteSpace: "pre-line" }}>{err}</p>
+            <button onClick={() => start(facing)} style={{ background: T.amber, border: "none", color: "#000", padding: "12px 28px", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>Try Again</button>
           </div>
         ) : (
           <>
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              style={{ width: "100%", height: "100%", objectFit: "cover" }}
-            />
-            {/* Viewfinder overlay */}
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                pointerEvents: "none",
-              }}
-            >
-              <div
-                style={{
-                  width: "80%",
-                  maxWidth: 340,
-                  height: 200,
-                  border: "2px solid rgba(245,158,11,0.8)",
-                  borderRadius: 16,
-                  boxShadow: "0 0 0 2000px rgba(0,0,0,0.35)",
-                }}
-              >
-                <div style={{ position: "absolute", top: -1, left: -1, width: 24, height: 24, borderTop: "4px solid #f59e0b", borderLeft: "4px solid #f59e0b", borderRadius: "4px 0 0 0" }} />
-                <div style={{ position: "absolute", top: -1, right: -1, width: 24, height: 24, borderTop: "4px solid #f59e0b", borderRight: "4px solid #f59e0b", borderRadius: "0 4px 0 0" }} />
-                <div style={{ position: "absolute", bottom: -1, left: -1, width: 24, height: 24, borderBottom: "4px solid #f59e0b", borderLeft: "4px solid #f59e0b", borderRadius: "0 0 0 4px" }} />
-                <div style={{ position: "absolute", bottom: -1, right: -1, width: 24, height: 24, borderBottom: "4px solid #f59e0b", borderRight: "4px solid #f59e0b", borderRadius: "0 0 4px 0" }} />
+            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            {/* Viewfinder */}
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+              <div style={{ width: "84%", maxWidth: 380, height: 220, position: "relative" }}>
+                {/* Dimmed outside */}
+                <div style={{ position: "absolute", inset: 0, boxShadow: "0 0 0 2000px rgba(0,0,0,0.5)", borderRadius: 18 }} />
+                <div style={{ position: "absolute", inset: 0, border: `2px solid ${T.amber}cc`, borderRadius: 18 }} />
+                {/* Corner accents */}
+                {[["top","left"],["top","right"],["bottom","left"],["bottom","right"]].map(([v,h]) => (
+                  <div key={v+h} style={{
+                    position: "absolute", [v]: -2, [h]: -2, width: 26, height: 26,
+                    borderTop: v === "top" ? `4px solid ${T.amber}` : "none",
+                    borderBottom: v === "bottom" ? `4px solid ${T.amber}` : "none",
+                    borderLeft: h === "left" ? `4px solid ${T.amber}` : "none",
+                    borderRight: h === "right" ? `4px solid ${T.amber}` : "none",
+                  }} />
+                ))}
+                {/* Scan line */}
+                {ready && <div style={{ position: "absolute", left: 0, right: 0, height: 2, background: `linear-gradient(90deg, transparent, ${T.amber}, transparent)`, animation: "scanLine 2s linear infinite", borderRadius: 2 }} />}
               </div>
             </div>
-            <p
-              style={{
-                position: "absolute",
-                bottom: 100,
-                width: "100%",
-                textAlign: "center",
-                color: "rgba(255,255,255,0.75)",
-                fontSize: 13,
-                fontWeight: 600,
-                pointerEvents: "none",
-              }}
-            >
+            <p style={{ position: "absolute", bottom: 118, width: "100%", textAlign: "center", color: "rgba(255,255,255,0.6)", fontSize: 13, fontWeight: 600, pointerEvents: "none", letterSpacing: "0.03em" }}>
               Fit the menu inside the frame
             </p>
           </>
         )}
       </div>
 
-      {/* Capture button */}
-      {!error && (
-        <div
-          style={{
-            padding: "24px",
-            display: "flex",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.6)",
-          }}
-        >
+      {/* Shutter */}
+      {!err && (
+        <div style={{ padding: "22px 24px 28px", display: "flex", justifyContent: "center", background: "rgba(0,0,0,0.8)" }}>
           <button
             onClick={capture}
             disabled={!ready}
             style={{
-              width: 72,
-              height: 72,
-              borderRadius: "50%",
-              background: ready ? "#f59e0b" : "#4b5563",
-              border: "4px solid white",
+              width: 76, height: 76, borderRadius: "50%",
+              background: ready ? T.amber : "#292524",
+              border: `5px solid ${ready ? "rgba(255,255,255,0.9)" : "#44403c"}`,
               cursor: ready ? "pointer" : "not-allowed",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 28,
-              transition: "all 0.2s",
-              boxShadow: ready ? "0 0 0 8px rgba(245,158,11,0.3)" : "none",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 28, transition: "all .2s",
+              boxShadow: ready ? `0 0 0 10px ${T.amber}28` : "none",
             }}
           >
             📷
@@ -681,112 +460,83 @@ function CameraView({ onCapture, onClose }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// TRAVELER PHRASES PANEL
-// ─────────────────────────────────────────────
+// ── SCANNING OVERLAY ──────────────────────────────────────────
+function Scanning({ preview }) {
+  const steps = ["Detecting language & script…","Reading every dish name…","Researching dish information…","Analysing ingredients & allergens…","Building your menu guide…"];
+  const [step, setStep] = useState(0);
+  useEffect(() => { const t = setInterval(() => setStep(s => Math.min(s + 1, steps.length - 1)), 1700); return () => clearInterval(t); }, []);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1500, background: "rgba(12,10,9,0.97)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 28 }}>
+      {preview && (
+        <div style={{ width: 220, height: 150, borderRadius: 18, overflow: "hidden", border: `2px solid ${T.amber}`, position: "relative", marginBottom: 36 }}>
+          <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <div style={{ position: "absolute", left: 0, right: 0, height: 3, background: `linear-gradient(90deg, transparent, ${T.amber}, transparent)`, animation: "scanLine 1.5s linear infinite" }} />
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, transparent 60%, rgba(12,10,9,0.7))" }} />
+        </div>
+      )}
+      <div style={{ width: "100%", maxWidth: 340 }}>
+        {steps.map((s, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "11px 16px", borderRadius: 14, marginBottom: 6, background: i === step ? `${T.amber}12` : "transparent", border: `1px solid ${i === step ? T.amber + "40" : "transparent"}`, opacity: i > step ? 0.2 : 1, transition: "all .3s" }}>
+            {i < step
+              ? <span style={{ fontSize: 15, color: T.green, flexShrink: 0 }}>✓</span>
+              : i === step
+                ? <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${T.amber}`, borderTopColor: "transparent", animation: "spin .7s linear infinite", flexShrink: 0 }} />
+                : <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${T.text3}`, flexShrink: 0 }} />
+            }
+            <span style={{ fontSize: 14, color: i <= step ? T.text1 : T.text3, fontWeight: i === step ? 700 : 400 }}>{s}</span>
+          </div>
+        ))}
+      </div>
+      <p style={{ color: T.text3, fontSize: 12, marginTop: 24 }}>AI is researching your menu…</p>
+    </div>
+  );
+}
+
+// ── PHRASES PANEL ─────────────────────────────────────────────
 const PHRASES = [
-  { en: "Is this spicy?", hi: "क्या यह तीखा है?", ph: "Kya yeh teekha hai?", icon: "🌶️" },
-  { en: "Does this have egg?", hi: "क्या इसमें अंडा है?", ph: "Kya ismein anda hai?", icon: "🥚" },
-  { en: "Does this have nuts?", hi: "क्या इसमें मेवे हैं?", ph: "Kya ismein meve hain?", icon: "🥜" },
-  { en: "Can you make it less spicy?", hi: "कम तीखा बना सकते हैं?", ph: "Kam teekha bana sakte hain?", icon: "😌" },
-  { en: "I am vegetarian.", hi: "मैं शाकाहारी हूँ।", ph: "Main shakahari hoon.", icon: "🌿" },
-  { en: "Does this have dairy?", hi: "क्या इसमें दूध है?", ph: "Kya ismein doodh hai?", icon: "🥛" },
-  { en: "What is the best dish?", hi: "सबसे अच्छा क्या है?", ph: "Sabse accha kya hai?", icon: "⭐" },
-  { en: "No seafood please.", hi: "समुद्री भोजन नहीं।", ph: "Samudri bhojan nahi.", icon: "🦐" },
+  { en: "Is this spicy?",           hi: "क्या यह तीखा है?",           ph: "Kya yeh teekha hai?",            icon: "🌶️" },
+  { en: "Does this have egg?",      hi: "क्या इसमें अंडा है?",         ph: "Kya ismein anda hai?",           icon: "🥚" },
+  { en: "Does this have nuts?",     hi: "क्या इसमें मेवे हैं?",        ph: "Kya ismein meve hain?",          icon: "🥜" },
+  { en: "Make it less spicy please",hi: "कम तीखा बना दीजिए",           ph: "Kam teekha bana dijiye",         icon: "😌" },
+  { en: "I am vegetarian.",         hi: "मैं शाकाहारी हूँ।",           ph: "Main shakahari hoon.",           icon: "🌿" },
+  { en: "No dairy please.",         hi: "दूध से बनी चीज़ नहीं।",       ph: "Doodh se bani cheez nahi.",      icon: "🥛" },
+  { en: "What do you recommend?",   hi: "आप क्या सुझाते हैं?",         ph: "Aap kya sujhaate hain?",         icon: "⭐" },
+  { en: "Does this have seafood?",  hi: "क्या इसमें मछली है?",         ph: "Kya ismein machli hai?",         icon: "🦐" },
+  { en: "I have a nut allergy.",    hi: "मुझे मेवों से एलर्जी है।",    ph: "Mujhe mevon se allergy hai.",    icon: "⚠️" },
+  { en: "Can I get the bill?",      hi: "बिल लाइए।",                   ph: "Bill laiye.",                    icon: "🧾" },
 ];
 
-function PhrasesPanel({ onClose }) {
+function Phrases({ onClose }) {
   const [copied, setCopied] = useState(null);
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 900,
-        background: "rgba(0,0,0,0.5)",
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "center",
-      }}
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "white",
-          borderRadius: "24px 24px 0 0",
-          width: "100%",
-          maxWidth: 600,
-          maxHeight: "80vh",
-          overflowY: "auto",
-          paddingBottom: 32,
-        }}
-      >
-        <div
-          style={{
-            padding: "16px 20px",
-            borderBottom: "1px solid #f1f5f9",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            position: "sticky",
-            top: 0,
-            background: "white",
-            zIndex: 1,
-          }}
-        >
+    <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: T.bg1, borderRadius: "28px 28px 0 0", width: "100%", maxWidth: 600, maxHeight: "82vh", overflowY: "auto", paddingBottom: 36 }}>
+        {/* Handle */}
+        <div style={{ width: 40, height: 4, background: T.bg3, borderRadius: 4, margin: "14px auto 0" }} />
+        {/* Header */}
+        <div style={{ padding: "14px 20px 12px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: T.bg1, zIndex: 1 }}>
           <div>
-            <p style={{ fontWeight: 800, fontSize: 17, color: "#0f172a", margin: 0 }}>🗣️ Traveler Phrases</p>
-            <p style={{ fontSize: 12, color: "#94a3b8", margin: "2px 0 0" }}>Tap to copy • Show to your server</p>
+            <p style={{ fontWeight: 800, fontSize: 18, color: T.text1, margin: 0 }}>🗣️ Traveler Phrases</p>
+            <p style={{ fontSize: 12, color: T.text3, margin: "3px 0 0" }}>Tap Copy — shows Hindi & speaks it aloud</p>
           </div>
-          <button
-            onClick={onClose}
-            style={{ background: "#f1f5f9", border: "none", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 16 }}
-          >
-            ✕
-          </button>
+          <button onClick={onClose} style={{ background: T.bg3, border: `1px solid ${T.border}`, borderRadius: "50%", width: 34, height: 34, cursor: "pointer", color: T.text2, fontSize: 16 }}>✕</button>
         </div>
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Phrases */}
+        <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
           {PHRASES.map((p, i) => (
-            <div
-              key={i}
-              style={{
-                background: "#fffbeb",
-                border: "1px solid #fde68a",
-                borderRadius: 16,
-                padding: "12px 14px",
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-              }}
-            >
-              <span style={{ fontSize: 22, flexShrink: 0 }}>{p.icon}</span>
+            <div key={i} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 18, padding: "14px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24, flexShrink: 0 }}>{p.icon}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: 600, color: "#334155", fontSize: 13, margin: 0 }}>{p.en}</p>
-                <p style={{ fontSize: 18, fontWeight: 800, color: "#92400e", margin: "2px 0 0" }}>{p.hi}</p>
-                <p style={{ fontSize: 11, color: "#b45309", fontStyle: "italic", margin: "1px 0 0" }}>{p.ph}</p>
+                <p style={{ fontWeight: 600, color: T.text2, fontSize: 13, margin: 0 }}>{p.en}</p>
+                <p style={{ fontSize: 20, fontWeight: 800, color: T.amber, margin: "3px 0 1px", fontFamily: "'Noto Sans', sans-serif" }}>{p.hi}</p>
+                <p style={{ fontSize: 11, color: T.amberDim, fontStyle: "italic", margin: 0 }}>{p.ph}</p>
               </div>
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(p.hi).catch(() => {});
-                  speakText(p.hi);
-                  setCopied(i);
-                  setTimeout(() => setCopied(null), 1800);
-                }}
-                style={{
-                  background: copied === i ? "#16a34a" : "#f59e0b",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 10,
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  transition: "background 0.2s",
-                }}
+                onClick={() => { navigator.clipboard.writeText(p.hi).catch(() => {}); speak(p.hi); setCopied(i); setTimeout(() => setCopied(null), 2000); }}
+                style={{ background: copied === i ? "#14532d" : T.amberBg, border: `1px solid ${copied === i ? T.green : T.amberDim}`, color: copied === i ? T.green : T.amber, borderRadius: 12, padding: "8px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", flexShrink: 0 }}
               >
-                {copied === i ? "✓ Copied" : "Copy"}
+                {copied === i ? "✓ Done" : "Copy"}
               </button>
             </div>
           ))}
@@ -796,313 +546,106 @@ function PhrasesPanel({ onClose }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// SCANNING ANIMATION
-// ─────────────────────────────────────────────
-function ScanningOverlay({ imagePreview }) {
-  const steps = [
-    "Detecting language & script…",
-    "Reading dish names…",
-    "Searching for dish information…",
-    "Analysing ingredients & spice levels…",
-    "Preparing your menu guide…",
-  ];
-  const [step, setStep] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setStep((s) => Math.min(s + 1, steps.length - 1)), 1800);
-    return () => clearInterval(t);
-  }, []);
+// ── MAIN APP ──────────────────────────────────────────────────
+const FILTERS = ["All","Veg","Non-Veg","Mild","Spicy","Must Try","Breakfast","Lunch","Dinner","Snack","Dessert","Drink"];
+const LANGS = ["English","French","German","Spanish","Japanese","Chinese","Korean","Arabic","Portuguese","Russian","Italian"];
 
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 800,
-        background: "rgba(15,23,42,0.95)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      {/* Preview image with scan line */}
-      {imagePreview && (
-        <div
-          style={{
-            width: 200,
-            height: 140,
-            borderRadius: 16,
-            overflow: "hidden",
-            border: "2px solid #f59e0b",
-            position: "relative",
-            marginBottom: 28,
-          }}
-        >
-          <img src={imagePreview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              height: 2,
-              background: "linear-gradient(90deg, transparent, #f59e0b, transparent)",
-              animation: "scanLine 1.5s linear infinite",
-              top: "50%",
-            }}
-          />
-        </div>
-      )}
-
-      <div style={{ width: "100%", maxWidth: 320 }}>
-        {steps.map((s, i) => (
-          <div
-            key={i}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "10px 14px",
-              borderRadius: 12,
-              marginBottom: 6,
-              background: i === step ? "rgba(245,158,11,0.12)" : "transparent",
-              border: `1px solid ${i === step ? "rgba(245,158,11,0.4)" : "transparent"}`,
-              transition: "all 0.3s",
-              opacity: i > step ? 0.25 : 1,
-            }}
-          >
-            {i < step ? (
-              <span style={{ fontSize: 16, color: "#4ade80" }}>✓</span>
-            ) : i === step ? (
-              <div
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: "50%",
-                  border: "2px solid #f59e0b",
-                  borderTopColor: "transparent",
-                  animation: "spin 0.7s linear infinite",
-                  flexShrink: 0,
-                }}
-              />
-            ) : (
-              <div style={{ width: 16, height: 16, borderRadius: "50%", border: "2px solid #475569", flexShrink: 0 }} />
-            )}
-            <span style={{ fontSize: 14, color: i <= step ? "white" : "#64748b", fontWeight: i === step ? 700 : 400 }}>
-              {s}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <p style={{ color: "#64748b", fontSize: 12, marginTop: 20, textAlign: "center" }}>
-        AI is reading and researching your menu…
-      </p>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────
-// MAIN APP
-// ─────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState("home"); // home | results
-  const [showCamera, setShowCamera] = useState(false);
+  const [showCam, setShowCam] = useState(false);
   const [showPhrases, setShowPhrases] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [imagePreview, setImagePreview] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
-  const [targetLang, setTargetLang] = useState("English");
-  const [activeFilter, setActiveFilter] = useState("All");
-  const fileInputRef = useRef();
+  const [lang, setLang] = useState("English");
+  const [filter, setFilter] = useState("All");
+  const fileRef = useRef();
 
-  const processImage = async (base64, preview) => {
-    setImagePreview(preview);
-    setShowCamera(false);
-    setScanning(true);
-    setError(null);
-    setResults(null);
-
+  const process = async (b64, prev) => {
+    setPreview(prev); setShowCam(false); setScanning(true); setError(null); setResults(null);
     try {
-      const data = await analyzeMenuImage(base64, targetLang);
-      if (data.detectedLanguage === "Not a menu image") {
-        setError("This doesn't look like a menu. Please try again with a clearer photo of a restaurant menu.");
-        setScanning(false);
-        return;
-      }
-      setResults(data);
-      setScreen("results");
-    } catch (err) {
-      setError("Something went wrong: " + err.message + ". Make sure you're connected to the internet.");
-    } finally {
-      setScanning(false);
-    }
+      const data = await analyzeMenuImage(b64, lang);
+      setResults(data); setScreen("results"); setFilter("All");
+    } catch (e) { setError(e.message); }
+    finally { setScanning(false); }
   };
 
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target.result;
-      const base64 = dataUrl.split(",")[1];
-      processImage(base64, dataUrl);
-    };
-    reader.readAsDataURL(file);
-    e.target.value = "";
+  const onFile = e => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => { const d = ev.target.result; process(d.split(",")[1], d); };
+    r.readAsDataURL(f); e.target.value = "";
   };
 
-  const filteredDishes = results?.dishes?.filter((d) => {
-    if (activeFilter === "All") return true;
-    if (activeFilter === "Veg") return d.isVeg;
-    if (activeFilter === "Non-Veg") return !d.isVeg;
-    if (activeFilter === "Mild") return d.spiceLevel <= 2;
-    if (activeFilter === "Spicy") return d.spiceLevel >= 4;
-    return d.mealType === activeFilter;
+  const filtered = results?.dishes?.filter(d => {
+    if (filter === "All") return true;
+    if (filter === "Veg") return d.isVeg;
+    if (filter === "Non-Veg") return !d.isVeg;
+    if (filter === "Mild") return (d.spiceLevel || 1) <= 2;
+    if (filter === "Spicy") return (d.spiceLevel || 1) >= 4;
+    if (filter === "Must Try") return d.mustTry;
+    return d.mealType === filter;
   }) || [];
 
-  const filters = ["All", "Veg", "Non-Veg", "Mild", "Spicy", "Breakfast", "Lunch", "Dinner", "Snack", "Dessert"];
+  const reset = () => { setScreen("home"); setResults(null); setPreview(null); setFilter("All"); setError(null); };
 
   return (
     <>
-      {/* Global CSS */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;700;800&family=Outfit:wght@400;600;700;800;900&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-        body { font-family: 'Outfit', sans-serif; background: #f8fafc; color: #0f172a; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
-        @keyframes scanLine { from { top: 0; } to { top: 100%; } }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-        ::-webkit-scrollbar { width: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+        body{font-family:'Plus Jakarta Sans',sans-serif;background:${T.bg0};color:${T.text1};-webkit-font-smoothing:antialiased}
+        button,select{font-family:'Plus Jakarta Sans',sans-serif}
+        @keyframes slideUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes pulseBtn{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+        @keyframes scanLine{from{top:0}to{top:100%}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        ::-webkit-scrollbar{width:0;height:0}
+        select option{background:${T.bg1};color:${T.text1}}
       `}</style>
 
-      {/* Camera */}
-      {showCamera && (
-        <CameraView
-          onCapture={(b64, preview) => processImage(b64, preview)}
-          onClose={() => setShowCamera(false)}
-        />
-      )}
+      {showCam && <Camera onCapture={process} onClose={() => setShowCam(false)} />}
+      {scanning && <Scanning preview={preview} />}
+      {showPhrases && <Phrases onClose={() => setShowPhrases(false)} />}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onFile} />
 
-      {/* Scanning overlay */}
-      {scanning && <ScanningOverlay imagePreview={imagePreview} />}
-
-      {/* Phrases panel */}
-      {showPhrases && <PhrasesPanel onClose={() => setShowPhrases(false)} />}
-
-      {/* Hidden file input */}
-      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFileUpload} />
-
-      {/* ─── HOME SCREEN ─── */}
+      {/* ═══ HOME SCREEN ═══ */}
       {screen === "home" && (
         <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-          {/* Hero */}
-          <div
-            style={{
-              background: "linear-gradient(135deg, #92400e 0%, #b45309 40%, #d97706 100%)",
-              padding: "48px 24px 40px",
-              textAlign: "center",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            {/* bg decoration */}
-            <div style={{ position: "absolute", top: -40, right: -40, width: 180, height: 180, borderRadius: "50%", background: "rgba(255,255,255,0.07)" }} />
-            <div style={{ position: "absolute", bottom: -30, left: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.06)" }} />
+
+          {/* ── Hero ── */}
+          <div style={{ position: "relative", padding: "56px 24px 48px", textAlign: "center", overflow: "hidden" }}>
+            {/* bg glow */}
+            <div style={{ position: "absolute", top: -60, left: "50%", transform: "translateX(-50%)", width: 400, height: 400, borderRadius: "50%", background: `radial-gradient(circle, ${T.amber}18 0%, transparent 70%)`, pointerEvents: "none" }} />
             <div style={{ position: "relative", zIndex: 1 }}>
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  background: "rgba(255,255,255,0.15)",
-                  borderRadius: 30,
-                  padding: "6px 16px",
-                  marginBottom: 20,
-                  fontSize: 13,
-                  color: "rgba(255,255,255,0.9)",
-                  fontWeight: 600,
-                }}
-              >
-                🇮🇳 AI-Powered Menu Translator
+              {/* Logo mark */}
+              <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 72, height: 72, borderRadius: 22, background: T.amberBg, border: `1.5px solid ${T.amberDim}40`, marginBottom: 20, fontSize: 36 }}>🍽️</div>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: `${T.amber}18`, border: `1px solid ${T.amber}30`, borderRadius: 30, padding: "6px 14px", marginBottom: 20, marginLeft: 12, fontSize: 11, color: T.amberDim, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", verticalAlign: "middle" }}>
+                🇮🇳 AI-Powered
               </div>
-              <h1 style={{ fontSize: 36, fontWeight: 900, color: "white", lineHeight: 1.15, marginBottom: 12 }}>
-                Never be lost<br />on a menu again.
+              <h1 style={{ fontSize: 40, fontWeight: 900, color: T.text1, lineHeight: 1.1, marginBottom: 14, letterSpacing: "-0.02em" }}>
+                Never lost<br /><span style={{ color: T.amber }}>on a menu</span> again.
               </h1>
-              <p style={{ color: "rgba(255,255,255,0.8)", fontSize: 15, lineHeight: 1.7, maxWidth: 320, margin: "0 auto 28px" }}>
-                Point your camera at any Indian regional menu. AI reads it, translates it, explains every dish — live.
+              <p style={{ color: T.text2, fontSize: 15, lineHeight: 1.8, maxWidth: 320, margin: "0 auto 32px" }}>
+                Scan any Indian menu in any script. AI reads the language, researches every dish, and gives you the full guide instantly.
               </p>
 
-              {/* Language selector */}
+              {/* Lang select */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 28 }}>
-                <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: 600 }}>Translate to</span>
-                <select
-                  value={targetLang}
-                  onChange={(e) => setTargetLang(e.target.value)}
-                  style={{
-                    background: "rgba(255,255,255,0.2)",
-                    border: "1px solid rgba(255,255,255,0.4)",
-                    color: "white",
-                    borderRadius: 12,
-                    padding: "6px 12px",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    outline: "none",
-                    fontFamily: "Outfit, sans-serif",
-                  }}
-                >
-                  {["English","French","German","Spanish","Japanese","Chinese","Korean","Arabic","Portuguese"].map(l => (
-                    <option key={l} value={l} style={{ color: "#0f172a", background: "white" }}>{l}</option>
-                  ))}
+                <span style={{ color: T.text3, fontSize: 13, fontWeight: 600 }}>Translate to</span>
+                <select value={lang} onChange={e => setLang(e.target.value)} style={{ background: T.bg2, border: `1px solid ${T.border}`, color: T.text1, borderRadius: 12, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", outline: "none" }}>
+                  {LANGS.map(l => <option key={l} value={l}>{l}</option>)}
                 </select>
               </div>
 
-              {/* Action buttons */}
+              {/* CTA buttons */}
               <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-                <button
-                  onClick={() => setShowCamera(true)}
-                  style={{
-                    background: "white",
-                    color: "#b45309",
-                    border: "none",
-                    borderRadius: 16,
-                    padding: "14px 24px",
-                    fontSize: 15,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-                    transition: "transform 0.15s",
-                    fontFamily: "Outfit, sans-serif",
-                  }}
-                >
+                <button onClick={() => setShowCam(true)} style={{ background: T.amber, color: "#000", border: "none", borderRadius: 18, padding: "16px 28px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 9, boxShadow: `0 4px 32px ${T.amber}40` }}>
                   📷 Open Camera
                 </button>
-                <button
-                  onClick={() => fileInputRef.current.click()}
-                  style={{
-                    background: "rgba(255,255,255,0.18)",
-                    color: "white",
-                    border: "2px solid rgba(255,255,255,0.5)",
-                    borderRadius: 16,
-                    padding: "14px 24px",
-                    fontSize: 15,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    transition: "transform 0.15s",
-                    fontFamily: "Outfit, sans-serif",
-                  }}
-                >
+                <button onClick={() => fileRef.current.click()} style={{ background: T.bg2, color: T.text1, border: `1.5px solid ${T.border}`, borderRadius: 18, padding: "16px 28px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 9 }}>
                   🖼️ Upload Photo
                 </button>
               </div>
@@ -1111,290 +654,115 @@ export default function App() {
 
           {/* Error */}
           {error && (
-            <div
-              style={{
-                margin: "16px",
-                background: "#fff1f2",
-                border: "1px solid #fecdd3",
-                borderRadius: 14,
-                padding: "14px 16px",
-                display: "flex",
-                gap: 10,
-                alignItems: "flex-start",
-              }}
-            >
-              <span style={{ fontSize: 20 }}>⚠️</span>
+            <div style={{ margin: "0 16px 16px", background: "#2d0a0a", border: "1px solid #7f1d1d", borderRadius: 16, padding: "14px 16px", display: "flex", gap: 10, animation: "fadeIn .3s ease" }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>⚠️</span>
               <div>
-                <p style={{ fontWeight: 700, color: "#be123c", fontSize: 14 }}>Error</p>
-                <p style={{ color: "#9f1239", fontSize: 13, marginTop: 2 }}>{error}</p>
+                <p style={{ fontWeight: 700, color: "#fca5a5", fontSize: 14 }}>Error</p>
+                <p style={{ color: "#f87171", fontSize: 13, marginTop: 3, lineHeight: 1.6 }}>{error}</p>
               </div>
             </div>
           )}
 
           {/* How it works */}
-          <div style={{ padding: "28px 20px 8px" }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 16 }}>
-              How It Works
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {[
-                { n: "1", t: "Scan or Upload", d: "Take a photo of any menu — any Indian language or script", icon: "📷" },
-                { n: "2", t: "AI Detects Language", d: "Automatically identifies Hindi, Bengali, Tamil, Telugu and 6 more scripts", icon: "🔍" },
-                { n: "3", t: "Live Research", d: "AI searches the internet to find full details about every dish", icon: "🌐" },
-                { n: "4", t: "Full Guide Instantly", d: "Ingredients, spice level, allergens, pronunciation, cultural tips", icon: "✨" },
-              ].map((s) => (
-                <div
-                  key={s.n}
-                  style={{
-                    display: "flex",
-                    gap: 14,
-                    alignItems: "flex-start",
-                    background: "white",
-                    borderRadius: 16,
-                    padding: "14px 16px",
-                    border: "1px solid #f1f5f9",
-                    boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                  }}
-                >
-                  <span style={{ fontSize: 26, flexShrink: 0 }}>{s.icon}</span>
-                  <div>
-                    <p style={{ fontWeight: 800, fontSize: 15, color: "#0f172a" }}>{s.t}</p>
-                    <p style={{ fontSize: 13, color: "#64748b", marginTop: 2, lineHeight: 1.5 }}>{s.d}</p>
-                  </div>
+          <div style={{ padding: "8px 20px 16px" }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14 }}>How It Works</p>
+            {[
+              { icon: "📷", t: "Scan or Upload", d: "Any photo of any Indian menu — any language, any handwriting" },
+              { icon: "🔍", t: "AI Detects Language", d: "Identifies script automatically: Hindi, Bengali, Tamil, Telugu, and 6 more" },
+              { icon: "🌐", t: "AI Researches Every Dish", d: "Looks up ingredients, origin, spice level, allergens, cultural context" },
+              { icon: "✨", t: "Your Full Guide", d: "Pronunciation, food description, pairing suggestions, traveler tips" },
+            ].map(s => (
+              <div key={s.t} style={{ display: "flex", gap: 14, background: T.bg1, borderRadius: 18, padding: "14px 16px", border: `1px solid ${T.border}`, marginBottom: 8 }}>
+                <span style={{ fontSize: 26, flexShrink: 0 }}>{s.icon}</span>
+                <div>
+                  <p style={{ fontWeight: 800, fontSize: 15, color: T.text1 }}>{s.t}</p>
+                  <p style={{ fontSize: 13, color: T.text2, marginTop: 3, lineHeight: 1.55 }}>{s.d}</p>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
           </div>
 
           {/* Supported scripts */}
-          <div style={{ padding: "24px 20px" }}>
-            <p style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 14 }}>
-              Supported Indian Scripts
-            </p>
+          <div style={{ padding: "0 20px 16px" }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 14 }}>Supported Scripts</p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-              {[
-                { name: "Hindi", script: "हिंदी" },
-                { name: "Bengali", script: "বাংলা" },
-                { name: "Tamil", script: "தமிழ்" },
-                { name: "Telugu", script: "తెలుగు" },
-                { name: "Kannada", script: "ಕನ್ನಡ" },
-                { name: "Malayalam", script: "മലയാളം" },
-                { name: "Marathi", script: "मराठी" },
-                { name: "Gujarati", script: "ગુજરાતી" },
-                { name: "Punjabi", script: "ਪੰਜਾਬੀ" },
-              ].map((s) => (
-                <div
-                  key={s.name}
-                  style={{
-                    background: "white",
-                    border: "1px solid #f1f5f9",
-                    borderRadius: 14,
-                    padding: "10px 8px",
-                    textAlign: "center",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                  }}
-                >
-                  <p style={{ fontSize: 20, fontWeight: 800, color: "#b45309", fontFamily: "'Noto Sans', sans-serif" }}>{s.script}</p>
-                  <p style={{ fontSize: 11, color: "#64748b", fontWeight: 600, marginTop: 2 }}>{s.name}</p>
+              {[{n:"Hindi",s:"हिंदी"},{n:"Bengali",s:"বাংলা"},{n:"Tamil",s:"தமிழ்"},{n:"Telugu",s:"తెలుగు"},{n:"Kannada",s:"ಕನ್ನಡ"},{n:"Malayalam",s:"മലയാളം"},{n:"Marathi",s:"मराठी"},{n:"Gujarati",s:"ગુજરાતી"},{n:"Punjabi",s:"ਪੰਜਾਬੀ"}].map(s => (
+                <div key={s.n} style={{ background: T.bg1, border: `1px solid ${T.border}`, borderRadius: 16, padding: "12px 8px", textAlign: "center" }}>
+                  <p style={{ fontSize: 21, fontWeight: 800, color: T.amber, fontFamily: "'Noto Sans', sans-serif" }}>{s.s}</p>
+                  <p style={{ fontSize: 11, color: T.text2, fontWeight: 600, marginTop: 3 }}>{s.n}</p>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Phrases CTA */}
-          <div style={{ padding: "0 20px 40px" }}>
-            <button
-              onClick={() => setShowPhrases(true)}
-              style={{
-                width: "100%",
-                background: "linear-gradient(135deg, #0f766e, #0d9488)",
-                color: "white",
-                border: "none",
-                borderRadius: 18,
-                padding: "16px",
-                fontSize: 15,
-                fontWeight: 800,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                fontFamily: "Outfit, sans-serif",
-              }}
-            >
-              🗣️ Traveler Phrases Helper
-              <span style={{ fontSize: 12, fontWeight: 500, opacity: 0.8 }}>— copy in Hindi, speak aloud</span>
+          {/* Phrase helper CTA */}
+          <div style={{ padding: "0 20px 48px" }}>
+            <button onClick={() => setShowPhrases(true)} style={{ width: "100%", background: T.tealBg, border: `1.5px solid ${T.teal}40`, color: T.teal, borderRadius: 18, padding: "16px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              🗣️ Traveler Phrase Helper
+              <span style={{ fontSize: 12, fontWeight: 500, color: `${T.teal}80` }}>10 essential Hindi phrases</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* ─── RESULTS SCREEN ─── */}
+      {/* ═══ RESULTS SCREEN ═══ */}
       {screen === "results" && results && (
-        <div style={{ minHeight: "100vh", background: "#f8fafc" }}>
-          {/* Top bar */}
-          <div
-            style={{
-              position: "sticky",
-              top: 0,
-              zIndex: 100,
-              background: "white",
-              borderBottom: "1px solid #f1f5f9",
-              padding: "12px 16px",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              boxShadow: "0 1px 8px rgba(0,0,0,0.06)",
-            }}
-          >
-            <button
-              onClick={() => { setScreen("home"); setResults(null); setImagePreview(null); setActiveFilter("All"); }}
-              style={{
-                background: "#f1f5f9",
-                border: "none",
-                borderRadius: 10,
-                padding: "8px 12px",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: "pointer",
-                color: "#475569",
-                flexShrink: 0,
-              }}
-            >
-              ← Back
-            </button>
+        <div style={{ minHeight: "100vh", background: T.bg0 }}>
+
+          {/* Sticky top bar */}
+          <div style={{ position: "sticky", top: 0, zIndex: 100, background: `${T.bg0}f0`, backdropFilter: "blur(12px)", borderBottom: `1px solid ${T.border}`, padding: "12px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={reset} style={{ background: T.bg2, border: `1px solid ${T.border}`, borderRadius: 12, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", color: T.text2, flexShrink: 0 }}>← Back</button>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 800, fontSize: 15, color: "#0f172a", margin: 0 }}>Menu Translated</p>
-              <p style={{ fontSize: 11, color: "#94a3b8", margin: "1px 0 0" }}>
-                {results.detectedLanguage} · {results.dishes?.length} dishes found
-              </p>
+              <p style={{ fontWeight: 800, fontSize: 15, color: T.text1, margin: 0 }}>Menu Translated</p>
+              <p style={{ fontSize: 11, color: T.text3, margin: "1px 0 0" }}>{results.detectedLanguage} · {results.dishes?.length} dishes</p>
             </div>
-            {imagePreview && (
-              <img
-                src={imagePreview}
-                alt="menu"
-                style={{ width: 40, height: 40, borderRadius: 10, objectFit: "cover", border: "2px solid #fde68a", flexShrink: 0 }}
-              />
-            )}
+            {preview && <img src={preview} alt="menu" style={{ width: 42, height: 42, borderRadius: 12, objectFit: "cover", border: `2px solid ${T.amberDim}`, flexShrink: 0 }} />}
           </div>
 
-          {/* Stats bar */}
-          <div
-            style={{
-              background: "linear-gradient(135deg, #b45309, #d97706)",
-              padding: "14px 16px",
-              display: "flex",
-              gap: 16,
-              alignItems: "center",
-            }}
-          >
+          {/* Stats banner */}
+          <div style={{ background: `linear-gradient(135deg, ${T.amberBg}, ${T.bg2})`, borderBottom: `1px solid ${T.border}`, padding: "16px 18px", display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ flex: 1 }}>
-              <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 600 }}>Detected Script</p>
-              <p style={{ color: "white", fontWeight: 800, fontSize: 15 }}>{results.detectedScript || results.detectedLanguage}</p>
+              <p style={{ color: T.text3, fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Detected</p>
+              <p style={{ color: T.amber, fontWeight: 800, fontSize: 17, marginTop: 1 }}>{results.detectedScript || results.detectedLanguage}</p>
+              {results.restaurantType && <p style={{ color: T.text2, fontSize: 12, marginTop: 2 }}>{results.restaurantType}</p>}
             </div>
             <div style={{ textAlign: "right" }}>
-              <p style={{ color: "white", fontWeight: 900, fontSize: 28, lineHeight: 1 }}>{results.dishes?.length}</p>
-              <p style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, fontWeight: 600 }}>dishes</p>
-            </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-              <span style={{ fontSize: 11, background: "rgba(255,255,255,0.2)", color: "white", padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>
-                {results.dishes?.filter(d => d.isVeg).length} Veg
-              </span>
-              <span style={{ fontSize: 11, background: "rgba(255,255,255,0.2)", color: "white", padding: "3px 8px", borderRadius: 20, fontWeight: 600 }}>
-                {results.dishes?.filter(d => !d.isVeg).length} Non-Veg
-              </span>
+              <p style={{ color: T.text1, fontWeight: 900, fontSize: 36, lineHeight: 1 }}>{results.dishes?.length}</p>
+              <p style={{ color: T.text3, fontSize: 11 }}>dishes found</p>
+              <div style={{ display: "flex", gap: 5, marginTop: 5, justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 10, background: "#052e16", color: T.green, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{results.dishes?.filter(d => d.isVeg).length} Veg</span>
+                <span style={{ fontSize: 10, background: "#2d0a0a", color: T.red, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>{results.dishes?.filter(d => !d.isVeg).length} Non-Veg</span>
+              </div>
             </div>
           </div>
 
           {/* Filters */}
-          <div style={{ padding: "12px 0", overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-            <div style={{ display: "flex", gap: 8, padding: "0 16px", width: "max-content" }}>
-              {filters.map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setActiveFilter(f)}
-                  style={{
-                    padding: "7px 14px",
-                    borderRadius: 20,
-                    fontSize: 12,
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                    background: activeFilter === f ? "#f59e0b" : "#f1f5f9",
-                    color: activeFilter === f ? "white" : "#64748b",
-                    transition: "all 0.15s",
-                    whiteSpace: "nowrap",
-                    fontFamily: "Outfit, sans-serif",
-                  }}
-                >
-                  {f}
+          <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", padding: "12px 0 4px" }}>
+            <div style={{ display: "flex", gap: 7, padding: "0 16px", width: "max-content" }}>
+              {FILTERS.map(f => (
+                <button key={f} onClick={() => setFilter(f)} style={{ padding: "7px 15px", borderRadius: 22, fontSize: 12, fontWeight: 700, border: `1px solid ${filter === f ? T.amber : T.border}`, cursor: "pointer", background: filter === f ? T.amber : T.bg1, color: filter === f ? "#000" : T.text2, whiteSpace: "nowrap", transition: "all .15s" }}>
+                  {f === "Must Try" ? "★ Must Try" : f}
                 </button>
               ))}
             </div>
           </div>
 
           {/* Dish cards */}
-          <div style={{ padding: "0 16px", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 100 }}>
-            {filteredDishes.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 20px", color: "#94a3b8" }}>
-                <p style={{ fontSize: 40 }}>🍽️</p>
-                <p style={{ fontWeight: 700, marginTop: 12 }}>No dishes match this filter</p>
+          <div style={{ padding: "8px 16px 120px", display: "flex", flexDirection: "column", gap: 12 }}>
+            {filtered.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "56px 20px", color: T.text3 }}>
+                <p style={{ fontSize: 48 }}>🍽️</p>
+                <p style={{ fontWeight: 700, marginTop: 16, color: T.text2 }}>No dishes match this filter</p>
               </div>
-            ) : (
-              filteredDishes.map((dish, i) => (
-                <DishCard key={dish.id || i} dish={dish} index={i} />
-              ))
-            )}
+            ) : filtered.map((dish, i) => <DishCard key={dish.id || i} dish={dish} idx={i} />)}
           </div>
 
           {/* Bottom bar */}
-          <div
-            style={{
-              position: "fixed",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              background: "white",
-              borderTop: "1px solid #f1f5f9",
-              padding: "12px 16px",
-              display: "flex",
-              gap: 10,
-              boxShadow: "0 -4px 20px rgba(0,0,0,0.08)",
-              zIndex: 50,
-            }}
-          >
-            <button
-              onClick={() => { setScreen("home"); setResults(null); setImagePreview(null); }}
-              style={{
-                flex: 1,
-                background: "#f1f5f9",
-                color: "#475569",
-                border: "none",
-                borderRadius: 14,
-                padding: "13px",
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "Outfit, sans-serif",
-              }}
-            >
+          <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: `${T.bg1}f8`, backdropFilter: "blur(16px)", borderTop: `1px solid ${T.border}`, padding: "12px 16px 24px", display: "flex", gap: 10, zIndex: 50 }}>
+            <button onClick={reset} style={{ flex: 1, background: T.bg2, border: `1px solid ${T.border}`, color: T.text1, borderRadius: 16, padding: 14, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
               📷 Scan New
             </button>
-            <button
-              onClick={() => setShowPhrases(true)}
-              style={{
-                flex: 1,
-                background: "linear-gradient(135deg, #d97706, #f59e0b)",
-                color: "white",
-                border: "none",
-                borderRadius: 14,
-                padding: "13px",
-                fontSize: 14,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: "Outfit, sans-serif",
-              }}
-            >
+            <button onClick={() => setShowPhrases(true)} style={{ flex: 1, background: T.amber, color: "#000", border: "none", borderRadius: 16, padding: 14, fontSize: 14, fontWeight: 800, cursor: "pointer", boxShadow: `0 4px 20px ${T.amber}30` }}>
               🗣️ Phrases
             </button>
           </div>
