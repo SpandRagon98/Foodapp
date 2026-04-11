@@ -14,7 +14,12 @@ import { useState, useRef, useCallback, useEffect } from "react";
 
 // Injected at build time by GitHub Actions from your repository secret.
 // Never hardcode your key here — always use the env variable.
-const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_KEY || "";
+const RAW_ANTHROPIC_KEY =
+  import.meta.env.VITE_ANTHROPIC_KEY ||
+  import.meta.env.VITE_ANTHROPIC_API_KEY ||
+  "";
+
+const ANTHROPIC_KEY = String(RAW_ANTHROPIC_KEY).trim();
 
 // ── THEME TOKENS ─────────────────────────────────────────────
 const T = {
@@ -39,7 +44,7 @@ const T = {
 };
 
 // ── AI ANALYSIS ───────────────────────────────────────────────
-async function analyzeMenuImage(base64, targetLang) {
+async function analyzeMenuImage(base64, targetLang, mediaType = "image/jpeg") {
   const prompt = `You are MenuSaarthi — an expert AI food guide for international travelers visiting India.
 
 Analyze this restaurant menu image carefully.
@@ -76,13 +81,82 @@ Respond ONLY with this exact JSON (no markdown fences, no extra text):
       "dishTags": ["crispy", "light", "street food"],
       "mealType": "Breakfast",
       "estimatedCalories": "300-400 kcal",
-      "allergenWarning": "Contains gluten" or null,
+      "allergenWarning": null,
       "pairsWith": "Sambar and coconut chutney",
       "funFact": "One interesting historical or cultural fact",
       "travelerTip": "Practical ordering tip for a foreign visitor",
-      "mustTry": true or false
+      "mustTry": true
     }
   ]
+}
+
+spiceLevel: 1=none, 2=mild, 3=medium, 4=hot, 5=extreme
+mustTry: mark the 1-2 most iconic/recommended dishes as true
+If the image is not a menu, set detectedLanguage to "NOT_A_MENU".`;
+
+  if (!ANTHROPIC_KEY) {
+    throw new Error(
+      "API key not configured. Add repository secret ANTHROPIC_KEY and map it to VITE_ANTHROPIC_KEY in GitHub Actions."
+    );
+  }
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: "claude-opus-4-5",
+      max_tokens: 4096,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mediaType,
+                data: base64,
+              },
+            },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    const msg =
+      e?.error?.message ||
+      e?.error ||
+      `Anthropic request failed with status ${res.status}`;
+    throw new Error(msg);
+  }
+
+  const data = await res.json();
+  const text =
+    data.content?.filter((b) => b.type === "text").map((b) => b.text).join("") || "";
+
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) {
+    throw new Error("AI returned an unexpected response. Please try again.");
+  }
+
+  const parsed = JSON.parse(match[0]);
+
+  if (parsed.detectedLanguage === "NOT_A_MENU") {
+    throw new Error(
+      "This doesn't look like a menu. Please take a clearer photo of a restaurant menu."
+    );
+  }
+
+  return parsed;
 }
 
 spiceLevel: 1=none, 2=mild, 3=medium, 4=hot, 5=extreme
@@ -562,21 +636,52 @@ export default function App() {
   const [filter, setFilter] = useState("All");
   const fileRef = useRef();
 
-  const process = async (b64, prev) => {
-    setPreview(prev); setShowCam(false); setScanning(true); setError(null); setResults(null);
-    try {
-      const data = await analyzeMenuImage(b64, lang);
-      setResults(data); setScreen("results"); setFilter("All");
-    } catch (e) { setError(e.message); }
-    finally { setScanning(false); }
+const process = async (b64, prev, mediaType = "image/jpeg") => {
+  setPreview(prev);
+  setShowCam(false);
+  setScanning(true);
+  setError(null);
+  setResults(null);
+
+  try {
+    const data = await analyzeMenuImage(b64, lang, mediaType);
+    setResults(data);
+    setScreen("results");
+    setFilter("All");
+  } catch (e) {
+    setError(e.message || "Something went wrong while processing the image.");
+  } finally {
+    setScanning(false);
+  }
+};
+
+  const onFile = (e) => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+
+  const reader = new FileReader();
+
+  reader.onload = (ev) => {
+    const dataUrl = ev.target?.result;
+    if (typeof dataUrl !== "string") {
+      setError("Could not read the uploaded image.");
+      return;
+    }
+
+    const base64 = dataUrl.split(",")[1];
+    const mediaTypeMatch = dataUrl.match(/^data:(.*?);base64,/);
+    const mediaType = mediaTypeMatch?.[1] || f.type || "image/jpeg";
+
+    process(base64, dataUrl, mediaType);
   };
 
-  const onFile = e => {
-    const f = e.target.files?.[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = ev => { const d = ev.target.result; process(d.split(",")[1], d); };
-    r.readAsDataURL(f); e.target.value = "";
+  reader.onerror = () => {
+    setError("Could not read the uploaded image.");
   };
+
+  reader.readAsDataURL(f);
+  e.target.value = "";
+};
 
   const filtered = results?.dishes?.filter(d => {
     if (filter === "All") return true;
@@ -609,7 +714,15 @@ export default function App() {
       {showCam && <Camera onCapture={process} onClose={() => setShowCam(false)} />}
       {scanning && <Scanning preview={preview} />}
       {showPhrases && <Phrases onClose={() => setShowPhrases(false)} />}
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={onFile} />
+     <input
+  id="menu-photo-input"
+  ref={fileRef}
+  type="file"
+  accept="image/*,.jpg,.jpeg,.png,.webp"
+  capture="environment"
+  style={{ display: "none" }}
+  onChange={onFile}
+/>
 
       {/* ═══ HOME SCREEN ═══ */}
       {screen === "home" && (
@@ -645,9 +758,24 @@ export default function App() {
                 <button onClick={() => setShowCam(true)} style={{ background: T.amber, color: "#000", border: "none", borderRadius: 18, padding: "16px 28px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 9, boxShadow: `0 4px 32px ${T.amber}40` }}>
                   📷 Open Camera
                 </button>
-                <button onClick={() => fileRef.current.click()} style={{ background: T.bg2, color: T.text1, border: `1.5px solid ${T.border}`, borderRadius: 18, padding: "16px 28px", fontSize: 15, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 9 }}>
-                  🖼️ Upload Photo
-                </button>
+                <label
+  htmlFor="menu-photo-input"
+  style={{
+    background: T.bg2,
+    color: T.text1,
+    border: `1.5px solid ${T.border}`,
+    borderRadius: 18,
+    padding: "16px 28px",
+    fontSize: 15,
+    fontWeight: 800,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+  }}
+>
+  🖼️ Upload Photo
+</label>
               </div>
             </div>
           </div>
