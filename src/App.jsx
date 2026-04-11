@@ -45,7 +45,7 @@ const T = {
 
 // ── AI ANALYSIS ───────────────────────────────────────────────
 async function analyzeMenuImage(base64, targetLang, mediaType = "image/jpeg") {
-  const prompt = `You are MenuSaarthi — an expert AI food guide for international travelers visiting India.
+ const prompt = `You are MenuSaarthi — an expert AI food guide for international travelers visiting India.
 
 Analyze this restaurant menu image carefully.
 
